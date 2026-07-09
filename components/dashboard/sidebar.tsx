@@ -1,0 +1,98 @@
+"use client"
+
+import Image from "next/image"
+import Link from "next/link"
+import { usePathname } from "next/navigation"
+import { LogOut } from "lucide-react"
+import { navItems } from "./nav-items"
+import { cn } from "@/lib/utils"
+
+interface SidebarProps {
+  onNavigate?: () => void
+}
+
+const routes: Record<string, string> = {
+  Dashboard: "/dashboard",
+  "Dispatch HQ": "/dashboard/dispatch",
+  "Tire Shop HQ": "/dashboard/tire-shop",
+  "Miz Rita HQ": "/dashboard/miz-rita",
+  "Life HQ": "/dashboard/life",
+  "CEO Review": "/dashboard/ceo-review",
+  Calendar: "/dashboard/calendar",
+  Reports: "/dashboard/reports",
+  "SOP Library": "/dashboard/sop-library",
+  Settings: "/dashboard/settings",
+}
+
+export function SidebarContent({ onNavigate }: SidebarProps) {
+  const pathname = usePathname()
+
+  return (
+    <div className="flex h-full flex-col bg-[#061B33] text-white">
+      {/* Logo */}
+      <div className="flex items-center justify-center border-b border-white/10 px-6 py-6">
+        <Image
+          src="/gbgs-logo-transparent.png"
+          alt="GBGS"
+          width={180}
+          height={126}
+          priority
+          className="h-auto w-36"
+        />
+      </div>
+
+      {/* Navigation */}
+      <nav className="flex-1 overflow-y-auto px-3 py-4">
+        <ul className="flex flex-col gap-1">
+          {navItems.map((item) => {
+            const Icon = item.icon
+            const href = routes[item.label] || "#"
+            const active = pathname === href
+
+            return (
+              <li key={item.label}>
+                <Link
+                  href={href}
+                  onClick={onNavigate}
+                  className={cn(
+                    "group relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                    active
+                      ? "bg-white/5 text-white"
+                      : "text-white/70 hover:bg-white/5 hover:text-white"
+                  )}
+                >
+                  {active && (
+                    <span className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-[#C9A227]" />
+                  )}
+
+                  <Icon
+                    className={cn(
+                      "h-5 w-5 shrink-0",
+                      active
+                        ? "text-[#C9A227]"
+                        : "text-white/60 group-hover:text-[#C9A227]"
+                    )}
+                  />
+
+                  <span>{item.label}</span>
+                </Link>
+              </li>
+            )
+          })}
+        </ul>
+      </nav>
+
+      {/* Logout */}
+      <div className="border-t border-white/10 px-3 py-4">
+        <Link
+          href="/"
+          onClick={onNavigate}
+          className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-white/70 hover:bg-white/5 hover:text-white"
+        >
+          <LogOut className="h-5 w-5" />
+          Log Out
+        </Link>
+      </div>
+    </div>
+  )
+}
