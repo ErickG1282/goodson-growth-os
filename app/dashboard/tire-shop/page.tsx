@@ -355,23 +355,7 @@ export default function TireShopHQPage() {
       }
     }
 
-    // Dashboard calendar sync
-if (form.next_follow_up) {
-  const { error: calendarError } = await supabase
-    .from("gbgs_calendar_events")
-    .insert({
-      user_id: user.id,
-      title: `Tire Follow-up: ${company}`,
-      event_date: form.next_follow_up,
-      category: "Tire Shop",
-    })
-
-  if (calendarError) {
-    console.error("Tire Shop calendar sync failed:", calendarError)
-    setError(`Lead saved, but calendar sync failed: ${calendarError.message}`)
-  }
-}
-
+  
     setSaving(false)
     closeModal()
     loadLeads()
