@@ -9,18 +9,22 @@ import {
   useState,
 } from "react";
 import {
+  CalendarDays,
   CheckCircle2,
   ChefHat,
   Clock3,
   Container,
   Copy,
+  CreditCard,
   DollarSign,
   FileText,
+  Heart,
   Mail,
   Phone,
   Plus,
   Printer,
   RefreshCw,
+  Repeat2,
   Search,
   UtensilsCrossed,
   ShoppingBag,
@@ -2094,13 +2098,51 @@ function CustomerDetailsModal({
     (order) => order.order_status === "Completed",
   ).length;
 
+
+  const averageOrderValue =
+    orders.length > 0 ? totalSpent / orders.length : 0;
+
+  const totalMealsPurchased = orders.reduce((sum, order) => {
+    const details = parseOrderDetails(order.notes);
+    const meals = Number(details.numberOfMeals);
+    return sum + (Number.isFinite(meals) ? meals : 0);
+  }, 0);
+
+  const customerSince = customer.created_at
+    ? formatDate(customer.created_at.slice(0, 10))
+    : "Unknown";
+
+  const sortedOrders = [...orders].sort((a, b) =>
+    b.order_date.localeCompare(a.order_date),
+  );
+
+  const lastOrder = sortedOrders[0] || null;
+
+  const favoriteMeals = Object.entries(
+    orders.reduce<Record<string, number>>((counts, order) => {
+      const mealPlan = parseOrderDetails(order.notes).mealPlan;
+
+      if (mealPlan !== "Not specified") {
+        counts[mealPlan] = (counts[mealPlan] || 0) + 1;
+      }
+
+      return counts;
+    }, {}),
+  )
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 3);
+
+  const paymentHistory = sortedOrders.filter(
+    (order) => Number(order.amount_paid || 0) > 0,
+  );
+
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/60">
-      <div className="h-full w-full max-w-2xl overflow-y-auto bg-[#f1f4f8] shadow-2xl">
+      <div className="h-full w-full max-w-4xl overflow-y-auto bg-[#f1f4f8] shadow-2xl">
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-6 py-5">
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#d6a817]">
-              Customer Profile
+              Customer CRM
             </p>
 
             <h2 className="mt-1 text-2xl font-bold text-[#081c35]">
@@ -2148,18 +2190,22 @@ function CustomerDetailsModal({
             </div>
           </section>
 
-          <section className="grid gap-4 sm:grid-cols-3">
+          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <ProfileStat
               label="Total Orders"
               value={orders.length.toString()}
             />
             <ProfileStat
-              label="Completed"
-              value={completedOrders.toString()}
+              label="Lifetime Value"
+              value={formatMoney(totalSpent)}
             />
             <ProfileStat
-              label="Total Spent"
-              value={formatMoney(totalSpent)}
+              label="Balance Due"
+              value={formatMoney(balanceDue)}
+            />
+            <ProfileStat
+              label="Last Order"
+              value={lastOrder ? formatDate(lastOrder.order_date) : "No orders"}
             />
           </section>
 
@@ -2191,6 +2237,120 @@ function CustomerDetailsModal({
             <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">
               {customer.dietary_notes || "No dietary notes recorded."}
             </p>
+          </section>
+
+          <section className="grid gap-6 lg:grid-cols-2">
+            <div className="rounded-3xl bg-white p-6 shadow-md">
+              <div className="flex items-center gap-3">
+                <div className="rounded-xl bg-[#d6a817] p-3 text-[#081c35]">
+                  <Heart className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-[#081c35]">
+                    Favorite Meals
+                  </h3>
+                  <p className="text-sm text-slate-500">
+                    Most frequently purchased meal plans.
+                  </p>
+                </div>
+              </div>
+
+              {favoriteMeals.length === 0 ? (
+                <p className="mt-5 rounded-2xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
+                  Favorites will appear after the customer places orders.
+                </p>
+              ) : (
+                <div className="mt-5 space-y-3">
+                  {favoriteMeals.map(([meal, count], index) => (
+                    <div key={meal} className="flex items-center justify-between rounded-2xl border border-slate-200 p-4">
+                      <div>
+                        <p className="text-xs font-bold uppercase tracking-wide text-[#d6a817]">
+                          #{index + 1} Favorite
+                        </p>
+                        <p className="mt-1 font-bold text-[#081c35]">{meal}</p>
+                      </div>
+                      <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700">
+                        {count} order{count === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-3xl bg-white p-6 shadow-md">
+              <div className="flex items-center gap-3">
+                <div className="rounded-xl bg-[#081c35] p-3 text-white">
+                  <Repeat2 className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-[#081c35]">Subscription</h3>
+                  <p className="text-sm text-slate-500">Customer recurring-order status.</p>
+                </div>
+              </div>
+
+              <div className="mt-5 rounded-2xl border border-slate-200 p-5">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Status</p>
+                    <p className="mt-1 text-xl font-bold text-[#081c35]">
+                      {orders.length >= 3 ? "Repeat Customer" : "Not Enrolled"}
+                    </p>
+                  </div>
+                  <StatusBadge value={orders.length >= 3 ? "Active" : "Inactive"} />
+                </div>
+                <div className="mt-5 grid grid-cols-2 gap-3">
+                  <ProfileStat label="Completed" value={completedOrders.toString()} />
+                  <ProfileStat label="Orders" value={orders.length.toString()} />
+                </div>
+                <p className="mt-4 text-xs leading-5 text-slate-500">
+                  Weekly plans, renewal dates, pauses, and automatic billing can be connected when the subscription table is added.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-3xl bg-white p-6 shadow-md">
+            <div className="flex items-center gap-3">
+              <div className="rounded-xl bg-[#d6a817] p-3 text-[#081c35]">
+                <CreditCard className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-[#081c35]">Payment History</h3>
+                <p className="text-sm text-slate-500">Payments recorded on customer orders.</p>
+              </div>
+            </div>
+
+            {paymentHistory.length === 0 ? (
+              <p className="mt-5 rounded-2xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
+                No payments have been recorded yet.
+              </p>
+            ) : (
+              <div className="mt-5 overflow-x-auto">
+                <table className="w-full min-w-[600px] text-left">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
+                      <th className="px-3 py-3">Date</th>
+                      <th className="px-3 py-3">Order</th>
+                      <th className="px-3 py-3">Status</th>
+                      <th className="px-3 py-3 text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paymentHistory.map((order) => (
+                      <tr key={order.id} className="border-b border-slate-100 text-sm">
+                        <td className="px-3 py-4 text-slate-600">{formatDate(order.order_date)}</td>
+                        <td className="px-3 py-4 font-semibold text-[#081c35]">{order.order_number}</td>
+                        <td className="px-3 py-4"><StatusBadge value={order.payment_status} /></td>
+                        <td className="px-3 py-4 text-right font-bold text-[#081c35]">
+                          {formatMoney(Number(order.amount_paid || 0))}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
 
           <section className="rounded-3xl bg-white p-6 shadow-md">
