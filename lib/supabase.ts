@@ -10,3 +10,4 @@ export const supabase = createClient(
   supabaseUrl,
   supabaseAnonKey
 );
+// Supabase client configuration updated
