@@ -1,4 +1,6 @@
 "use client";
+// Phase 5A Build 1
+
 
 import {
   FormEvent,
@@ -20,6 +22,8 @@ import {
   FileText,
   Heart,
   Mail,
+  MessageCircle,
+  NotebookPen,
   Phone,
   Plus,
   Printer,
@@ -28,6 +32,7 @@ import {
   Search,
   UtensilsCrossed,
   ShoppingBag,
+  Tag,
   Trash2,
   UserRound,
   Users,
@@ -67,6 +72,14 @@ type Order = {
   created_at?: string;
 };
 
+type CustomerTag = {
+  id: string;
+  customer_id: string;
+  business_id: string;
+  tag: string;
+  created_at: string;
+};
+
 type CustomerFormState = {
   first_name: string;
   last_name: string;
@@ -92,6 +105,33 @@ type OrderFormState = {
   notes: string;
 };
 
+const CUSTOMER_TAG_OPTIONS = [
+  "VIP",
+  "Weekly",
+  "Bi-Weekly",
+  "Monthly",
+  "Athlete",
+  "Weight Loss",
+  "Diabetic",
+  "Family Plan",
+  "High Protein",
+  "Referral",
+] as const;
+
+function getCustomerTagClass(tag: string) {
+  const normalized = tag.toLowerCase();
+
+  if (normalized.includes("vip")) return "bg-amber-100 text-amber-900 ring-amber-200";
+  if (normalized.includes("weekly")) return "bg-emerald-100 text-emerald-900 ring-emerald-200";
+  if (normalized.includes("diabetic")) return "bg-sky-100 text-sky-900 ring-sky-200";
+  if (normalized.includes("athlete") || normalized.includes("protein")) return "bg-violet-100 text-violet-900 ring-violet-200";
+  if (normalized.includes("weight")) return "bg-rose-100 text-rose-900 ring-rose-200";
+  if (normalized.includes("family")) return "bg-orange-100 text-orange-900 ring-orange-200";
+  if (normalized.includes("referral")) return "bg-cyan-100 text-cyan-900 ring-cyan-200";
+
+  return "bg-slate-100 text-slate-800 ring-slate-200";
+}
+
 const EMPTY_CUSTOMER_FORM: CustomerFormState = {
   first_name: "",
   last_name: "",
@@ -116,7 +156,6 @@ const EMPTY_ORDER_FORM: OrderFormState = {
   amount_paid: "",
   notes: "",
 };
-
 
 const MEAL_PLANS = [
   {
@@ -145,7 +184,6 @@ const MEAL_PLANS = [
   },
 ] as const;
 
-
 export default function MizRitaPage() {
   const [businessId, setBusinessId] = useState("");
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -166,12 +204,12 @@ export default function MizRitaPage() {
   const [savingOrder, setSavingOrder] = useState(false);
   const [orderStep, setOrderStep] = useState(1);
   const [reviewConfirmed, setReviewConfirmed] = useState(false);
-  const [selectedCustomer, setSelectedCustomer] =
-    useState<Customer | null>(null);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(
+    null,
+  );
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [updatingOrder, setUpdatingOrder] = useState(false);
-  const [orderForm, setOrderForm] =
-    useState<OrderFormState>(EMPTY_ORDER_FORM);
+  const [orderForm, setOrderForm] = useState<OrderFormState>(EMPTY_ORDER_FORM);
 
   const loadData = useCallback(async (showRefreshState = false) => {
     if (showRefreshState) {
@@ -281,17 +319,13 @@ export default function MizRitaPage() {
       return [];
     }
 
-    return orders.filter(
-      (order) => order.customer_id === selectedCustomer.id,
-    );
+    return orders.filter((order) => order.customer_id === selectedCustomer.id);
   }, [orders, selectedCustomer]);
-
 
   const productionOrders = useMemo(() => {
     return orders
       .filter(
-        (order) =>
-          !["Completed", "Cancelled"].includes(order.order_status),
+        (order) => !["Completed", "Cancelled"].includes(order.order_status),
       )
       .map((order) => {
         const details = parseOrderDetails(order.notes);
@@ -322,41 +356,32 @@ export default function MizRitaPage() {
   );
 
   const upcomingMeals = useMemo(
-    () =>
-      productionOrders.reduce((sum, order) => sum + order.meals, 0),
+    () => productionOrders.reduce((sum, order) => sum + order.meals, 0),
     [productionOrders],
   );
 
   const containersNeeded = upcomingMeals;
 
   const totalRevenue = useMemo(
-    () =>
-      orders.reduce((sum, order) => sum + Number(order.total || 0), 0),
+    () => orders.reduce((sum, order) => sum + Number(order.total || 0), 0),
     [orders],
   );
 
   const unpaidBalance = useMemo(
     () =>
-      orders.reduce(
-        (sum, order) => sum + Number(order.balance_due || 0),
-        0,
-      ),
+      orders.reduce((sum, order) => sum + Number(order.balance_due || 0), 0),
     [orders],
   );
 
   const openOrders = useMemo(
     () =>
       orders.filter(
-        (order) =>
-          !["Completed", "Cancelled"].includes(order.order_status),
+        (order) => !["Completed", "Cancelled"].includes(order.order_status),
       ).length,
     [orders],
   );
 
-  function updateCustomerForm(
-    field: keyof CustomerFormState,
-    value: string,
-  ) {
+  function updateCustomerForm(field: keyof CustomerFormState, value: string) {
     setCustomerForm((current) => ({
       ...current,
       [field]: value,
@@ -369,7 +394,6 @@ export default function MizRitaPage() {
       [field]: value,
     }));
   }
-
 
   function selectMealPlan(planId: string) {
     if (!planId) {
@@ -395,7 +419,6 @@ export default function MizRitaPage() {
       subtotal: selectedPlan.price.toFixed(2),
     }));
   }
-
 
   function openCustomerModal() {
     setError("");
@@ -582,13 +605,11 @@ export default function MizRitaPage() {
                 Miz Rita HQ
               </p>
 
-              <h1 className="mt-2 text-3xl font-bold">
-                Customers & Orders
-              </h1>
+              <h1 className="mt-2 text-3xl font-bold">Customers & Orders</h1>
 
               <p className="mt-2 max-w-3xl text-sm text-slate-300">
-                Manage customers, meal-prep orders, balances,
-                fulfillment dates, and repeat business.
+                Manage customers, meal-prep orders, balances, fulfillment dates,
+                and repeat business.
               </p>
             </div>
 
@@ -600,9 +621,7 @@ export default function MizRitaPage() {
                 className="inline-flex items-center gap-2 rounded-xl border border-white/20 px-4 py-3 text-sm font-semibold transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <RefreshCw
-                  className={`h-4 w-4 ${
-                    refreshing ? "animate-spin" : ""
-                  }`}
+                  className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
                 />
                 Refresh
               </button>
@@ -673,8 +692,7 @@ export default function MizRitaPage() {
               </h2>
 
               <p className="mt-1 text-sm text-slate-500">
-                Search customers and review contact and dietary
-                information.
+                Search customers and review contact and dietary information.
               </p>
             </div>
 
@@ -730,7 +748,9 @@ export default function MizRitaPage() {
                       </td>
 
                       <td className="px-3 py-4 text-slate-600">
-                        {customer.phone || "—"}
+                        {customer.phone
+                          ? formatPhoneNumber(customer.phone)
+                          : "—"}
                       </td>
 
                       <td className="px-3 py-4 text-slate-600">
@@ -752,8 +772,6 @@ export default function MizRitaPage() {
           )}
         </section>
 
-
-
         <section className="mt-6 rounded-3xl bg-white p-6 shadow-lg">
           <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
             <div>
@@ -764,7 +782,8 @@ export default function MizRitaPage() {
                 Production Dashboard
               </h2>
               <p className="mt-1 text-sm text-slate-500">
-                See what needs to be prepared, how many meals are due, and when each order is scheduled.
+                See what needs to be prepared, how many meals are due, and when
+                each order is scheduled.
               </p>
             </div>
           </div>
@@ -856,7 +875,8 @@ export default function MizRitaPage() {
                 Meal Plan Catalog
               </h2>
               <p className="mt-1 text-sm text-slate-500">
-                These plans automatically fill the meal count and subtotal when creating an order.
+                These plans automatically fill the meal count and subtotal when
+                creating an order.
               </p>
             </div>
           </div>
@@ -867,9 +887,7 @@ export default function MizRitaPage() {
                 key={plan.id}
                 className="rounded-2xl border border-slate-200 p-5"
               >
-                <p className="text-sm font-bold text-[#081c35]">
-                  {plan.name}
-                </p>
+                <p className="text-sm font-bold text-[#081c35]">{plan.name}</p>
                 <p className="mt-2 text-3xl font-bold text-[#081c35]">
                   {formatMoney(plan.price)}
                 </p>
@@ -883,9 +901,7 @@ export default function MizRitaPage() {
 
         <section className="mt-6 rounded-3xl bg-white p-6 shadow-lg">
           <div>
-            <h2 className="text-xl font-bold text-[#081c35]">
-              Recent Orders
-            </h2>
+            <h2 className="text-xl font-bold text-[#081c35]">Recent Orders</h2>
 
             <p className="mt-1 text-sm text-slate-500">
               Review order totals, fulfillment dates, and balances.
@@ -903,9 +919,7 @@ export default function MizRitaPage() {
               actionLabel={
                 customers.length > 0 ? "Create First Order" : undefined
               }
-              onAction={
-                customers.length > 0 ? openOrderModal : undefined
-              }
+              onAction={customers.length > 0 ? openOrderModal : undefined}
             />
           ) : (
             <div className="mt-6 overflow-x-auto">
@@ -1033,10 +1047,7 @@ export default function MizRitaPage() {
                 <select
                   value={customerForm.customer_status}
                   onChange={(event) =>
-                    updateCustomerForm(
-                      "customer_status",
-                      event.target.value,
-                    )
+                    updateCustomerForm("customer_status", event.target.value)
                   }
                   className="form-input"
                 >
@@ -1051,10 +1062,7 @@ export default function MizRitaPage() {
                   <textarea
                     value={customerForm.dietary_notes}
                     onChange={(event) =>
-                      updateCustomerForm(
-                        "dietary_notes",
-                        event.target.value,
-                      )
+                      updateCustomerForm("dietary_notes", event.target.value)
                     }
                     className="form-input min-h-28 resize-y"
                     placeholder="Allergies, restrictions, preferences, or health-related meal notes"
@@ -1200,10 +1208,7 @@ export default function MizRitaPage() {
                       required
                       value={orderForm.delivery_method}
                       onChange={(event) =>
-                        updateOrderForm(
-                          "delivery_method",
-                          event.target.value,
-                        )
+                        updateOrderForm("delivery_method", event.target.value)
                       }
                       className="form-input"
                     >
@@ -1218,10 +1223,7 @@ export default function MizRitaPage() {
                       type="date"
                       value={orderForm.fulfillment_date}
                       onChange={(event) =>
-                        updateOrderForm(
-                          "fulfillment_date",
-                          event.target.value,
-                        )
+                        updateOrderForm("fulfillment_date", event.target.value)
                       }
                       className="form-input"
                     />
@@ -1232,10 +1234,7 @@ export default function MizRitaPage() {
                       type="time"
                       value={orderForm.pickup_time}
                       onChange={(event) =>
-                        updateOrderForm(
-                          "pickup_time",
-                          event.target.value,
-                        )
+                        updateOrderForm("pickup_time", event.target.value)
                       }
                       className="form-input"
                     />
@@ -1245,10 +1244,7 @@ export default function MizRitaPage() {
                     <select
                       value={orderForm.order_status}
                       onChange={(event) =>
-                        updateOrderForm(
-                          "order_status",
-                          event.target.value,
-                        )
+                        updateOrderForm("order_status", event.target.value)
                       }
                       className="form-input"
                     >
@@ -1277,10 +1273,7 @@ export default function MizRitaPage() {
                     <select
                       value={orderForm.payment_status}
                       onChange={(event) =>
-                        updateOrderForm(
-                          "payment_status",
-                          event.target.value,
-                        )
+                        updateOrderForm("payment_status", event.target.value)
                       }
                       className="form-input"
                     >
@@ -1293,25 +1286,19 @@ export default function MizRitaPage() {
                   <MoneyInput
                     label="Amount Paid"
                     value={orderForm.amount_paid}
-                    onChange={(value) =>
-                      updateOrderForm("amount_paid", value)
-                    }
+                    onChange={(value) => updateOrderForm("amount_paid", value)}
                   />
 
                   <MoneyInput
                     label="Delivery Fee"
                     value={orderForm.delivery_fee}
-                    onChange={(value) =>
-                      updateOrderForm("delivery_fee", value)
-                    }
+                    onChange={(value) => updateOrderForm("delivery_fee", value)}
                   />
 
                   <MoneyInput
                     label="Discount"
                     value={orderForm.discount}
-                    onChange={(value) =>
-                      updateOrderForm("discount", value)
-                    }
+                    onChange={(value) => updateOrderForm("discount", value)}
                   />
                 </div>
 
@@ -1352,7 +1339,8 @@ export default function MizRitaPage() {
                       I reviewed this order
                     </span>
                     <span className="mt-1 block text-xs text-slate-500">
-                      The order will not save until you check this box and press Finish & Save Order.
+                      The order will not save until you check this box and press
+                      Finish & Save Order.
                     </span>
                   </span>
                 </label>
@@ -1437,15 +1425,46 @@ export default function MizRitaPage() {
 
       {selectedCustomer ? (
         <CustomerDetailsModal
+          businessId={businessId}
           customer={selectedCustomer}
           orders={selectedCustomerOrders}
           onClose={() => setSelectedCustomer(null)}
-          onCreateOrder={() => {
+          onOrderUpdated={(updatedOrder) => {
+            setOrders((current) =>
+              current.map((order) =>
+                order.id === updatedOrder.id ? updatedOrder : order,
+              ),
+            );
+          }}
+          onCreateOrder={(repeatOrder) => {
             setSelectedCustomer(null);
-            setOrderForm({
-              ...EMPTY_ORDER_FORM,
-              customer_id: selectedCustomer.id,
-            });
+
+            if (repeatOrder) {
+              const details = parseOrderDetails(repeatOrder.notes);
+              setOrderForm({
+                ...EMPTY_ORDER_FORM,
+                customer_id: selectedCustomer.id,
+                delivery_method: repeatOrder.delivery_method || "Pickup",
+                meal_plan:
+                  details.mealPlan === "Not specified" ? "" : details.mealPlan,
+                number_of_meals:
+                  details.numberOfMeals === "Not specified"
+                    ? ""
+                    : details.numberOfMeals,
+                subtotal: String(
+                  repeatOrder.subtotal ?? repeatOrder.total ?? "",
+                ),
+                delivery_fee: String(repeatOrder.delivery_fee ?? ""),
+                discount: String(repeatOrder.discount ?? ""),
+                notes: repeatOrder.notes || "",
+              });
+            } else {
+              setOrderForm({
+                ...EMPTY_ORDER_FORM,
+                customer_id: selectedCustomer.id,
+              });
+            }
+
             setError("");
             setOrderStep(2);
             setShowOrderModal(true);
@@ -1457,8 +1476,7 @@ export default function MizRitaPage() {
         <OrderDetailsModal
           order={selectedOrder}
           customerName={
-            customerNames.get(selectedOrder.customer_id) ||
-            "Unknown customer"
+            customerNames.get(selectedOrder.customer_id) || "Unknown customer"
           }
           updating={updatingOrder}
           onClose={() => setSelectedOrder(null)}
@@ -1546,7 +1564,7 @@ export default function MizRitaPage() {
             setSelectedOrder(duplicatedOrder);
             setUpdatingOrder(false);
           }}
-                onDelete={async () => {
+          onDelete={async () => {
             const confirmed = window.confirm(
               `Delete order ${selectedOrder.order_number}? This cannot be undone.`,
             );
@@ -1598,8 +1616,6 @@ export default function MizRitaPage() {
     </div>
   );
 }
-
-
 
 function OrderDetailsModal({
   order,
@@ -1751,9 +1767,7 @@ function OrderDetailsModal({
             </div>
             <div class="card">
               <div class="label">Number of Meals</div>
-              <div class="value">${escapeHtml(
-                orderDetails.numberOfMeals,
-              )}</div>
+              <div class="value">${escapeHtml(orderDetails.numberOfMeals)}</div>
             </div>
           </div>
 
@@ -1776,9 +1790,7 @@ function OrderDetailsModal({
                   ? `
                     <tr>
                       <td colspan="2"><strong>Amount Paid</strong></td>
-                      <td>${formatMoney(
-                        Number(order.amount_paid || 0),
-                      )}</td>
+                      <td>${formatMoney(Number(order.amount_paid || 0))}</td>
                     </tr>
                     <tr>
                       <td colspan="2"><strong>Balance Due</strong></td>
@@ -1934,9 +1946,7 @@ function OrderDetailsModal({
           </section>
 
           <section className="rounded-3xl bg-white p-6 shadow-md">
-            <h3 className="text-lg font-bold text-[#081c35]">
-              Order Notes
-            </h3>
+            <h3 className="text-lg font-bold text-[#081c35]">Order Notes</h3>
 
             <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">
               {orderDetails.freeformNotes}
@@ -1944,9 +1954,7 @@ function OrderDetailsModal({
           </section>
 
           <section className="rounded-3xl bg-white p-6 shadow-md">
-            <h3 className="text-lg font-bold text-[#081c35]">
-              Order Actions
-            </h3>
+            <h3 className="text-lg font-bold text-[#081c35]">Order Actions</h3>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
               <button
@@ -2045,9 +2053,7 @@ function PaymentLine({
   return (
     <div className="flex items-center justify-between gap-4">
       <span
-        className={
-          bold ? "font-bold text-[#081c35]" : "text-sm text-slate-600"
-        }
+        className={bold ? "font-bold text-[#081c35]" : "text-sm text-slate-600"}
       >
         {label}
       </span>
@@ -2064,6 +2070,22 @@ function PaymentLine({
   );
 }
 
+function formatPhoneNumber(value: string | null | undefined) {
+  if (!value) return "Not provided";
+
+  const digits = value.replace(/\D/g, "");
+
+  if (digits.length === 10) {
+    return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+  }
+
+  if (digits.length === 11 && digits.startsWith("1")) {
+    return `1-${digits.slice(1, 4)}-${digits.slice(4, 7)}-${digits.slice(7)}`;
+  }
+
+  return value;
+}
+
 function escapeHtml(value: string) {
   return value
     .replaceAll("&", "&amp;")
@@ -2074,16 +2096,179 @@ function escapeHtml(value: string) {
 }
 
 function CustomerDetailsModal({
+  businessId,
   customer,
   orders,
   onClose,
   onCreateOrder,
+  onOrderUpdated,
 }: {
+  businessId: string;
   customer: Customer;
   orders: Order[];
   onClose: () => void;
-  onCreateOrder: () => void;
+  onCreateOrder: (repeatOrder?: Order) => void;
+  onOrderUpdated: (updatedOrder: Order) => void;
 }) {
+  const [crmNotes, setCrmNotes] = useState("");
+  const [notesSaved, setNotesSaved] = useState(false);
+  const [notesLoading, setNotesLoading] = useState(true);
+  const [notesSaving, setNotesSaving] = useState(false);
+  const [notesError, setNotesError] = useState("");
+  const [notesUpdatedAt, setNotesUpdatedAt] = useState<string | null>(null);
+  const [customerTags, setCustomerTags] = useState<CustomerTag[]>([]);
+  const [tagsLoading, setTagsLoading] = useState(true);
+  const [tagsSaving, setTagsSaving] = useState(false);
+  const [tagsError, setTagsError] = useState("");
+  const [customTag, setCustomTag] = useState("");
+  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+  const [editingSubscription, setEditingSubscription] = useState(false);
+  const [subscriptionSaving, setSubscriptionSaving] = useState(false);
+  const [paymentSavingId, setPaymentSavingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadCrmNotes() {
+      setNotesLoading(true);
+      setNotesError("");
+      setNotesSaved(false);
+
+      const { data, error } = await supabase
+        .from("gbgs_customer_crm_notes")
+        .select("notes, updated_at")
+        .eq("customer_id", customer.id)
+        .maybeSingle();
+
+      if (!isMounted) return;
+
+      if (error) {
+        setNotesError("Could not load CRM notes.");
+        setCrmNotes("");
+        setNotesUpdatedAt(null);
+      } else {
+        setCrmNotes(data?.notes || "");
+        setNotesUpdatedAt(data?.updated_at || null);
+      }
+
+      setNotesLoading(false);
+    }
+
+    loadCrmNotes();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [customer.id]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadCustomerTags() {
+      setTagsLoading(true);
+      setTagsError("");
+
+      const { data, error } = await supabase
+        .from("gbgs_customer_tags")
+        .select("*")
+        .eq("customer_id", customer.id)
+        .order("created_at", { ascending: true });
+
+      if (!isMounted) return;
+
+      if (error) {
+        setTagsError("Could not load customer tags. Run the updated SQL file.");
+        setCustomerTags([]);
+      } else {
+        setCustomerTags((data ?? []) as CustomerTag[]);
+      }
+
+      setTagsLoading(false);
+    }
+
+    void loadCustomerTags();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [customer.id]);
+
+  async function addCustomerTag(tagValue: string) {
+    const tag = tagValue.trim();
+    if (!tag || tagsSaving) return;
+
+    if (customerTags.some((item) => item.tag.toLowerCase() === tag.toLowerCase())) {
+      setCustomTag("");
+      return;
+    }
+
+    setTagsSaving(true);
+    setTagsError("");
+
+    const { data, error } = await supabase
+      .from("gbgs_customer_tags")
+      .insert({
+        business_id: businessId,
+        customer_id: customer.id,
+        tag,
+      })
+      .select("*")
+      .single();
+
+    if (error) {
+      setTagsError("Tag was not saved. Run the updated SQL file first.");
+    } else if (data) {
+      setCustomerTags((current) => [...current, data as CustomerTag]);
+      setCustomTag("");
+    }
+
+    setTagsSaving(false);
+  }
+
+  async function removeCustomerTag(tagId: string) {
+    setTagsSaving(true);
+    setTagsError("");
+
+    const { error } = await supabase
+      .from("gbgs_customer_tags")
+      .delete()
+      .eq("id", tagId);
+
+    if (error) {
+      setTagsError("Tag could not be removed.");
+    } else {
+      setCustomerTags((current) => current.filter((item) => item.id !== tagId));
+    }
+
+    setTagsSaving(false);
+  }
+
+  async function saveCrmNotes() {
+    setNotesSaving(true);
+    setNotesError("");
+    setNotesSaved(false);
+
+    const now = new Date().toISOString();
+    const { error } = await supabase.from("gbgs_customer_crm_notes").upsert(
+      {
+        customer_id: customer.id,
+        notes: crmNotes.trim(),
+        updated_at: now,
+      },
+      { onConflict: "customer_id" },
+    );
+
+    if (error) {
+      setNotesError("Notes were not saved. Run the included Supabase SQL file first.");
+    } else {
+      setNotesUpdatedAt(now);
+      setNotesSaved(true);
+      window.setTimeout(() => setNotesSaved(false), 1800);
+    }
+
+    setNotesSaving(false);
+  }
+
   const totalSpent = orders.reduce(
     (sum, order) => sum + Number(order.total || 0),
     0,
@@ -2098,9 +2283,7 @@ function CustomerDetailsModal({
     (order) => order.order_status === "Completed",
   ).length;
 
-
-  const averageOrderValue =
-    orders.length > 0 ? totalSpent / orders.length : 0;
+  const averageOrderValue = orders.length > 0 ? totalSpent / orders.length : 0;
 
   const totalMealsPurchased = orders.reduce((sum, order) => {
     const details = parseOrderDetails(order.notes);
@@ -2135,6 +2318,606 @@ function CustomerDetailsModal({
   const paymentHistory = sortedOrders.filter(
     (order) => Number(order.amount_paid || 0) > 0,
   );
+
+
+  const subscriptionTag = customerTags.find((item) =>
+    ["weekly", "bi-weekly", "monthly"].includes(item.tag.toLowerCase()),
+  );
+  const pausedTag = customerTags.find((item) => item.tag.toLowerCase() === "subscription paused");
+  const cancelledTag = customerTags.find((item) => item.tag.toLowerCase() === "subscription cancelled");
+  const subscriptionPlan = subscriptionTag?.tag || "Not Enrolled";
+  const subscriptionStatus = cancelledTag ? "Cancelled" : pausedTag ? "Paused" : subscriptionTag ? "Active" : "Inactive";
+  const subscriptionActive = subscriptionStatus === "Active";
+  const latestOrderDetails = lastOrder ? parseOrderDetails(lastOrder.notes) : null;
+  const subscriptionMeals = latestOrderDetails?.numberOfMeals || "Not set";
+  const subscriptionDelivery = lastOrder?.delivery_method || "Not set";
+  const subscriptionDay = lastOrder?.fulfillment_date
+    ? new Date(`${lastOrder.fulfillment_date}T12:00:00`).toLocaleDateString(
+        undefined,
+        { weekday: "long" },
+      )
+    : "Not scheduled";
+
+  async function setSubscriptionPlan(plan: "Weekly" | "Bi-Weekly" | "Monthly") {
+    setSubscriptionSaving(true);
+    setTagsError("");
+    const planTags = customerTags.filter((item) =>
+      ["weekly", "bi-weekly", "monthly"].includes(item.tag.toLowerCase()),
+    );
+    if (planTags.length) {
+      const { error } = await supabase.from("gbgs_customer_tags").delete().in("id", planTags.map((item) => item.id));
+      if (error) {
+        setTagsError("Subscription plan could not be updated.");
+        setSubscriptionSaving(false);
+        return;
+      }
+    }
+    const statusTags = customerTags.filter((item) =>
+      ["subscription paused", "subscription cancelled"].includes(item.tag.toLowerCase()),
+    );
+    if (statusTags.length) {
+      await supabase.from("gbgs_customer_tags").delete().in("id", statusTags.map((item) => item.id));
+    }
+    const { data, error } = await supabase.from("gbgs_customer_tags").insert({
+      business_id: businessId,
+      customer_id: customer.id,
+      tag: plan,
+    }).select("*").single();
+    if (error || !data) {
+      setTagsError("Subscription plan could not be updated.");
+    } else {
+      setCustomerTags((current) => [
+        ...current.filter((item) => !["weekly", "bi-weekly", "monthly", "subscription paused", "subscription cancelled"].includes(item.tag.toLowerCase())),
+        data as CustomerTag,
+      ]);
+      setEditingSubscription(false);
+    }
+    setSubscriptionSaving(false);
+  }
+
+  async function setSubscriptionStatus(status: "Active" | "Paused" | "Cancelled") {
+    if (!subscriptionTag && status !== "Cancelled") return;
+    setSubscriptionSaving(true);
+    setTagsError("");
+    const statusTags = customerTags.filter((item) =>
+      ["subscription paused", "subscription cancelled"].includes(item.tag.toLowerCase()),
+    );
+    if (statusTags.length) {
+      const { error } = await supabase.from("gbgs_customer_tags").delete().in("id", statusTags.map((item) => item.id));
+      if (error) {
+        setTagsError("Subscription status could not be updated.");
+        setSubscriptionSaving(false);
+        return;
+      }
+    }
+    let created: CustomerTag | null = null;
+    if (status !== "Active") {
+      const { data, error } = await supabase.from("gbgs_customer_tags").insert({
+        business_id: businessId,
+        customer_id: customer.id,
+        tag: `Subscription ${status}`,
+      }).select("*").single();
+      if (error || !data) {
+        setTagsError("Subscription status could not be updated.");
+        setSubscriptionSaving(false);
+        return;
+      }
+      created = data as CustomerTag;
+    }
+    setCustomerTags((current) => {
+      const cleaned = current.filter((item) => !["subscription paused", "subscription cancelled"].includes(item.tag.toLowerCase()));
+      return created ? [...cleaned, created] : cleaned;
+    });
+    setSubscriptionSaving(false);
+  }
+
+  async function setOrderPayment(order: Order, paid: boolean) {
+    setPaymentSavingId(order.id);
+    const total = Number(order.total || 0);
+    const amountPaid = paid ? total : 0;
+    const { data, error } = await supabase
+      .from("gbgs_orders")
+      .update({
+        payment_status: paid ? "Paid" : "Unpaid",
+        amount_paid: amountPaid,
+        balance_due: paid ? 0 : total,
+      })
+      .eq("id", order.id)
+      .select("*")
+      .single();
+    if (error || !data) {
+      window.alert(error?.message || "Payment status could not be updated.");
+    } else {
+      onOrderUpdated(data as Order);
+    }
+    setPaymentSavingId(null);
+  }
+
+  function printCustomerOrder(order: Order) {
+    const details = parseOrderDetails(order.notes);
+    const printWindow = window.open("", "_blank", "width=1000,height=900");
+    if (!printWindow) return;
+
+    const total = Number(order.total || 0);
+    const amountPaid = Number(order.amount_paid || 0);
+    const balanceDue = Number(order.balance_due || 0);
+    const isPaid =
+      String(order.payment_status || "").toLowerCase() === "paid" ||
+      balanceDue <= 0;
+    const logoUrl = `${window.location.origin}/miz-ritas-logo.png`;
+    const receiptNumber = `RC-${String(order.order_number || "").replace(
+      /[^a-zA-Z0-9]/g,
+      "",
+    )}`;
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Receipt ${escapeHtml(order.order_number)}</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+          <style>
+            * { box-sizing: border-box; }
+            body {
+              margin: 0;
+              padding: 28px;
+              background: #f4efe7;
+              color: #172033;
+              font-family: Arial, Helvetica, sans-serif;
+            }
+            .receipt {
+              position: relative;
+              max-width: 900px;
+              margin: 0 auto;
+              overflow: hidden;
+              background: #fffdf8;
+              border: 1px solid #e7ddcf;
+              box-shadow: 0 18px 50px rgba(34, 26, 18, .14);
+              padding: 34px;
+            }
+            .watermark {
+              position: absolute;
+              left: 50%;
+              top: 52%;
+              width: 520px;
+              transform: translate(-50%, -50%);
+              opacity: .035;
+              pointer-events: none;
+            }
+            .content { position: relative; z-index: 1; }
+            .header {
+              display: grid;
+              grid-template-columns: 1.1fr 1fr .9fr;
+              gap: 24px;
+              align-items: start;
+            }
+            .logo {
+              display: block;
+              width: 340px;
+              max-width: none;
+              height: auto;
+              object-fit: contain;
+              object-position: center;
+            }
+            .business-name, .receipt-title {
+              margin: 10px 0 5px;
+              color: #a41118;
+              font-size: 20px;
+              font-weight: 900;
+              letter-spacing: .02em;
+            }
+            .receipt-title {
+              margin-top: 5px;
+              font-size: 38px;
+            }
+            .tagline {
+              color: #485526;
+              font-size: 13px;
+              font-weight: 700;
+            }
+            .contact {
+              margin-top: 18px;
+              font-size: 12px;
+              line-height: 1.8;
+            }
+            .receipt-meta {
+              margin-top: 18px;
+              border-top: 2px solid #b99f7b;
+              padding-top: 13px;
+            }
+            .meta-row, .total-row {
+              display: flex;
+              justify-content: space-between;
+              gap: 18px;
+              padding: 5px 0;
+              font-size: 12px;
+            }
+            .meta-row strong { text-transform: uppercase; }
+            .paid { color: #3b7b2b; font-weight: 900; }
+            .unpaid { color: #a41118; font-weight: 900; }
+            .info-grid {
+              display: grid;
+              grid-template-columns: 1fr 1.35fr;
+              gap: 16px;
+              margin-top: 24px;
+            }
+            .box {
+              min-height: 155px;
+              border: 1px solid #eadcca;
+              border-radius: 12px;
+              padding: 18px;
+              background: rgba(255,255,255,.78);
+            }
+            .box-title {
+              margin-bottom: 16px;
+              color: #a41118;
+              font-size: 12px;
+              font-weight: 900;
+              text-transform: uppercase;
+            }
+            .customer-name {
+              font-size: 16px;
+              font-weight: 900;
+              margin-bottom: 12px;
+            }
+            .line { margin: 6px 0; font-size: 12px; }
+            table {
+              width: 100%;
+              margin-top: 18px;
+              border-collapse: separate;
+              border-spacing: 0;
+              overflow: hidden;
+              border: 1px solid #e5dccd;
+              border-radius: 11px;
+              background: rgba(255,255,255,.78);
+            }
+            th {
+              background: #4c5626;
+              color: white;
+              padding: 12px;
+              font-size: 11px;
+              text-align: left;
+              text-transform: uppercase;
+            }
+            td {
+              padding: 15px 12px;
+              font-size: 12px;
+              border-bottom: 1px solid #ebe5dc;
+            }
+            tr:last-child td { border-bottom: 0; }
+            th:nth-child(1), td:nth-child(1) { width: 70px; text-align: center; }
+            th:nth-child(3), td:nth-child(3),
+            th:nth-child(4), td:nth-child(4) { text-align: right; width: 130px; }
+            .bottom-grid {
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 18px;
+              margin-top: 18px;
+            }
+            .thanks {
+              min-height: 210px;
+              border: 1px solid #eadcca;
+              border-radius: 12px;
+              padding: 20px;
+              background: rgba(255,255,255,.76);
+            }
+            .thanks h3 {
+              margin: 0 0 22px;
+              color: #a41118;
+              font-size: 16px;
+            }
+            .signature {
+              margin-top: 18px;
+              color: #485526;
+              font-family: Georgia, serif;
+              font-size: 20px;
+              font-style: italic;
+            }
+            .totals {
+              overflow: hidden;
+              border: 1px solid #eadcca;
+              border-radius: 12px;
+              background: rgba(255,255,255,.82);
+            }
+            .totals-inner { padding: 16px 20px 8px; }
+            .total-row { font-size: 13px; }
+            .grand-total {
+              margin-top: 8px;
+              padding-top: 12px;
+              border-top: 1px solid #cdbfa9;
+              font-size: 19px;
+              font-weight: 900;
+            }
+            .grand-total span:last-child { color: #a41118; }
+            .amount-paid {
+              background: #eef1e7;
+              color: #4c5626;
+              font-size: 17px;
+              font-weight: 900;
+              padding: 13px 20px;
+            }
+            .balance {
+              background: #a41118;
+              color: white;
+              font-size: 17px;
+              font-weight: 900;
+              padding: 13px 20px;
+            }
+            .footer {
+              margin-top: 22px;
+              border: 1px dashed #d9cbb7;
+              border-radius: 12px;
+              padding: 18px;
+              text-align: center;
+              background: rgba(255,255,255,.8);
+            }
+            .footer-title {
+              color: #a41118;
+              font-size: 12px;
+              font-weight: 900;
+              text-transform: uppercase;
+            }
+            .footer-info {
+              margin-top: 12px;
+              display: flex;
+              flex-wrap: wrap;
+              justify-content: center;
+              gap: 22px;
+              color: #485526;
+              font-size: 12px;
+            }
+            .footer-tagline {
+              margin-top: 22px;
+              color: #a41118;
+              font-weight: 800;
+            }
+            .actions {
+              max-width: 900px;
+              margin: 0 auto 14px;
+              display: flex;
+              justify-content: flex-end;
+              gap: 10px;
+            }
+            button {
+              border: 0;
+              border-radius: 9px;
+              background: #081c35;
+              color: white;
+              padding: 11px 18px;
+              font-size: 13px;
+              font-weight: 800;
+              cursor: pointer;
+            }
+            @media (max-width: 760px) {
+              body { padding: 0; background: white; }
+              .receipt { padding: 20px; box-shadow: none; }
+              .header, .info-grid, .bottom-grid { grid-template-columns: 1fr; }
+              .logo { margin: 0 auto; }
+              .actions { padding: 12px; }
+            }
+            @media print {
+              @page { size: letter; margin: .28in; }
+              body { padding: 0; background: white; }
+              .actions { display: none; }
+              .receipt {
+                max-width: none;
+                border: 0;
+                box-shadow: none;
+                padding: 12px;
+              }
+              .header { gap: 14px; }
+              .logo { width: 190px; height: 155px; }
+              .box { min-height: 132px; }
+              .thanks { min-height: 175px; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="actions">
+            <button onclick="window.print()">Print Receipt</button>
+          </div>
+
+          <main class="receipt">
+            <img class="watermark" src="${logoUrl}" alt="" />
+            <div class="content">
+              <header class="header">
+                <div>
+                  <img class="logo" src="${logoUrl}" alt="Miz Rita's Kitchen logo" />
+                </div>
+
+                <div>
+                  <div class="business-name">MIZ RITA'S KITCHEN</div>
+                  <div class="tagline">Healthy Meals. Made with Love.</div>
+                  <div class="contact">
+                    <div>Atlanta, Georgia</div>
+                    <div>${escapeHtml(customer.phone || "Phone available upon request")}</div>
+                    <div>Miz Rita's Kitchen Meal Preps</div>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="receipt-title">RECEIPT</div>
+                  <div class="tagline">Thank you for your order!</div>
+                  <div class="receipt-meta">
+                    <div class="meta-row"><strong>Receipt #</strong><span>${escapeHtml(receiptNumber)}</span></div>
+                    <div class="meta-row"><strong>Date</strong><span>${escapeHtml(formatDate(order.order_date))}</span></div>
+                    <div class="meta-row"><strong>Payment Method</strong><span>${escapeHtml(order.payment_method || "Not recorded")}</span></div>
+                    <div class="meta-row"><strong>Status</strong><span class="${isPaid ? "paid" : "unpaid"}">${isPaid ? "Paid" : "Unpaid"}</span></div>
+                  </div>
+                </div>
+              </header>
+
+              <section class="info-grid">
+                <div class="box">
+                  <div class="box-title">Bill To</div>
+                  <div class="customer-name">${escapeHtml(customerName)}</div>
+                  <div class="line">${escapeHtml(customer.phone || "No phone recorded")}</div>
+                  <div class="line">${escapeHtml(customer.email || "No email recorded")}</div>
+                </div>
+
+                <div class="box">
+                  <div class="box-title">Order Information</div>
+                  <div class="meta-row"><strong>Order #</strong><span>${escapeHtml(order.order_number)}</span></div>
+                  <div class="meta-row"><strong>Order Date</strong><span>${escapeHtml(formatDate(order.order_date))}</span></div>
+                  <div class="meta-row"><strong>Fulfillment Date</strong><span>${escapeHtml(order.fulfillment_date ? formatDate(order.fulfillment_date) : "Not scheduled")}</span></div>
+                  <div class="meta-row"><strong>Service Type</strong><span>${escapeHtml(order.delivery_method || "Pickup")}</span></div>
+                  <div class="meta-row"><strong>Order Status</strong><span>${escapeHtml(order.order_status || "Pending")}</span></div>
+                </div>
+              </section>
+
+              <table>
+                <thead>
+                  <tr>
+                    <th>Qty</th>
+                    <th>Meal / Plan</th>
+                    <th>Unit Price</th>
+                    <th>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>${escapeHtml(details.numberOfMeals)}</td>
+                    <td>${escapeHtml(details.mealPlan)}</td>
+                    <td>${escapeHtml(formatMoney(total / Math.max(Number(details.numberOfMeals) || 1, 1)))}</td>
+                    <td>${escapeHtml(formatMoney(total))}</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <section class="bottom-grid">
+                <div class="thanks">
+                  <h3>♡ &nbsp; THANK YOU!</h3>
+                  <div>We appreciate your business and your commitment to eating healthy!</div>
+                  <div class="signature">Miz Rita's Kitchen Team ♥</div>
+                  ${
+                    details.freeformNotes
+                      ? `<div class="line" style="margin-top:18px"><strong>Order Notes:</strong> ${escapeHtml(details.freeformNotes)}</div>`
+                      : ""
+                  }
+                </div>
+
+                <div class="totals">
+                  <div class="totals-inner">
+                    <div class="total-row"><strong>Subtotal</strong><span>${escapeHtml(formatMoney(total))}</span></div>
+                    <div class="total-row"><strong>Discount</strong><span>${escapeHtml(formatMoney(0))}</span></div>
+                    <div class="total-row"><strong>Tax</strong><span>${escapeHtml(formatMoney(0))}</span></div>
+                    <div class="total-row grand-total"><span>TOTAL</span><span>${escapeHtml(formatMoney(total))}</span></div>
+                  </div>
+                  <div class="total-row amount-paid"><span>AMOUNT PAID</span><span>${escapeHtml(formatMoney(amountPaid))}</span></div>
+                  <div class="total-row balance"><span>BALANCE DUE</span><span>${escapeHtml(formatMoney(balanceDue))}</span></div>
+                </div>
+              </section>
+
+              <footer class="footer">
+                <div class="footer-title">Stay Connected</div>
+                <div class="footer-info">
+                  <span>Miz Rita's Kitchen</span>
+                  <span>Healthy meal-prep service</span>
+                  <span>Thank you for supporting our business</span>
+                </div>
+                <div class="footer-tagline">Healthy Meals. Made with Love. ♥</div>
+              </footer>
+            </div>
+          </main>
+        </body>
+      </html>
+    `);
+
+    printWindow.document.close();
+  }
+
+  const phoneDigits = (customer.phone || "").replace(/\D/g, "");
+  const customerName =
+    `${customer.first_name} ${customer.last_name ?? ""}`.trim();
+
+  function printCustomerSummary() {
+    const printWindow = window.open("", "_blank", "width=900,height=700");
+    if (!printWindow) return;
+
+    const orderRows = sortedOrders
+      .map(
+        (order) => `
+          <tr>
+            <td>${escapeHtml(order.order_number)}</td>
+            <td>${escapeHtml(formatDate(order.order_date))}</td>
+            <td>${escapeHtml(order.order_status)}</td>
+            <td>${escapeHtml(formatMoney(Number(order.total || 0)))}</td>
+          </tr>`,
+      )
+      .join("");
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>${escapeHtml(customerName)} - Customer Summary</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 32px; color: #081c35; }
+            h1 { margin-bottom: 4px; }
+            .muted { color: #64748b; }
+            .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 24px 0; }
+            .card { border: 1px solid #dbe3ec; border-radius: 12px; padding: 14px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th, td { border-bottom: 1px solid #e2e8f0; padding: 10px; text-align: left; }
+            th { background: #f8fafc; }
+          </style>
+        </head>
+        <body>
+          <h1>${escapeHtml(customerName)}</h1>
+          <p class="muted">${escapeHtml(formatPhoneNumber(customer.phone))} · ${escapeHtml(customer.email || "No email")}</p>
+          <div class="stats">
+            <div class="card"><strong>Total Orders</strong><br />${orders.length}</div>
+            <div class="card"><strong>Lifetime Value</strong><br />${escapeHtml(formatMoney(totalSpent))}</div>
+            <div class="card"><strong>Balance Due</strong><br />${escapeHtml(formatMoney(balanceDue))}</div>
+          </div>
+          <h2>Dietary Notes</h2>
+          <p>${escapeHtml(customer.dietary_notes || "No dietary notes recorded.")}</p>
+          <h2>Internal CRM Notes</h2>
+          <p>${escapeHtml(crmNotes || "No internal notes recorded.")}</p>
+          <h2>Order History</h2>
+          <table>
+            <thead><tr><th>Order</th><th>Date</th><th>Status</th><th>Total</th></tr></thead>
+            <tbody>${orderRows || '<tr><td colspan="4">No orders recorded.</td></tr>'}</tbody>
+          </table>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+  }
+
+  const activityItems = [
+    ...sortedOrders.map((order) => ({
+      id: `order-${order.id}`,
+      title: `Order ${order.order_number}`,
+      detail: `${order.order_status} · ${formatMoney(Number(order.total || 0))}`,
+      date: order.created_at || order.order_date,
+    })),
+    ...paymentHistory.map((order) => ({
+      id: `payment-${order.id}`,
+      title: "Payment recorded",
+      detail: `${order.order_number} · ${formatMoney(Number(order.amount_paid || 0))}`,
+      date: order.created_at || order.order_date,
+    })),
+    ...(notesUpdatedAt
+      ? [{
+          id: "crm-notes",
+          title: "CRM notes updated",
+          detail: "Internal customer notes were saved.",
+          date: notesUpdatedAt,
+        }]
+      : []),
+    ...(customer.created_at
+      ? [{
+          id: "customer-created",
+          title: "Customer added",
+          detail: `${customerName} was added to the CRM.`,
+          date: customer.created_at,
+        }]
+      : []),
+  ]
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 12);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/60">
@@ -2181,11 +2964,137 @@ function CustomerDetailsModal({
 
               <button
                 type="button"
-                onClick={onCreateOrder}
+                onClick={() => onCreateOrder()}
                 className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#d6a817] px-4 py-3 text-sm font-bold text-[#081c35]"
               >
                 <Plus className="h-4 w-4" />
                 Create Order
+              </button>
+            </div>
+          </section>
+
+          <section className="rounded-3xl bg-white p-6 shadow-md">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="rounded-xl bg-[#d6a817] p-3 text-[#081c35]">
+                  <Tag className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-[#081c35]">Customer Tags</h3>
+                  <p className="text-sm text-slate-500">Mark customer type, plan, and important preferences.</p>
+                </div>
+              </div>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
+                {customerTags.length} tag{customerTags.length === 1 ? "" : "s"}
+              </span>
+            </div>
+
+            {tagsLoading ? (
+              <p className="mt-5 text-sm text-slate-500">Loading tags...</p>
+            ) : (
+              <>
+                <div className="mt-5 flex flex-wrap gap-2">
+                  {customerTags.length === 0 ? (
+                    <p className="w-full rounded-2xl border border-dashed border-slate-300 p-4 text-center text-sm text-slate-500">
+                      No tags yet. Choose one below.
+                    </p>
+                  ) : (
+                    customerTags.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => void removeCustomerTag(item.id)}
+                        disabled={tagsSaving}
+                        title="Remove tag"
+                        className={`inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs font-bold ring-1 disabled:opacity-60 ${getCustomerTagClass(item.tag)}`}
+                      >
+                        {item.tag}
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    ))
+                  )}
+                </div>
+
+                <div className="mt-5 flex flex-wrap gap-2">
+                  {CUSTOMER_TAG_OPTIONS.filter(
+                    (option) => !customerTags.some((item) => item.tag === option),
+                  ).map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => void addCustomerTag(option)}
+                      disabled={tagsSaving}
+                      className="rounded-full border border-slate-200 px-3 py-2 text-xs font-bold text-[#081c35] hover:border-[#d6a817] hover:bg-amber-50 disabled:opacity-60"
+                    >
+                      + {option}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+                  <input
+                    value={customTag}
+                    onChange={(event) => setCustomTag(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void addCustomerTag(customTag);
+                      }
+                    }}
+                    placeholder="Add a custom tag"
+                    className="min-w-0 flex-1 rounded-xl border border-slate-200 px-4 py-3 text-sm text-[#081c35] outline-none focus:border-[#d6a817]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void addCustomerTag(customTag)}
+                    disabled={!customTag.trim() || tagsSaving}
+                    className="rounded-xl bg-[#d6a817] px-5 py-3 text-sm font-bold text-[#081c35] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {tagsSaving ? "Saving..." : "Add Tag"}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {tagsError ? (
+              <p className="mt-3 text-xs font-semibold text-red-700">{tagsError}</p>
+            ) : null}
+          </section>
+
+          <section className="rounded-3xl bg-white p-5 shadow-md">
+            <div className="flex flex-wrap gap-3">
+              <a
+                href={phoneDigits ? `tel:${phoneDigits}` : undefined}
+                className={`inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-bold ${phoneDigits ? "bg-[#081c35] text-white" : "cursor-not-allowed bg-slate-100 text-slate-400"}`}
+              >
+                <Phone className="h-4 w-4" /> Call
+              </a>
+              <a
+                href={customer.email ? `mailto:${customer.email}` : undefined}
+                className={`inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-bold ${customer.email ? "bg-[#081c35] text-white" : "cursor-not-allowed bg-slate-100 text-slate-400"}`}
+              >
+                <Mail className="h-4 w-4" /> Email
+              </a>
+              <a
+                href={phoneDigits ? `sms:${phoneDigits}` : undefined}
+                className={`inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-bold ${phoneDigits ? "bg-[#081c35] text-white" : "cursor-not-allowed bg-slate-100 text-slate-400"}`}
+              >
+                <MessageCircle className="h-4 w-4" /> Text
+              </a>
+              <button
+                type="button"
+                onClick={() => lastOrder && onCreateOrder(lastOrder)}
+                disabled={!lastOrder}
+                className="inline-flex items-center gap-2 rounded-xl bg-[#d6a817] px-4 py-3 text-sm font-bold text-[#081c35] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Repeat2 className="h-4 w-4" /> Repeat Last Order
+              </button>
+              <button
+                type="button"
+                onClick={printCustomerSummary}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm font-bold text-[#081c35]"
+              >
+                <Printer className="h-4 w-4" /> Print Summary
               </button>
             </div>
           </section>
@@ -2200,9 +3109,19 @@ function CustomerDetailsModal({
               value={formatMoney(totalSpent)}
             />
             <ProfileStat
-              label="Balance Due"
-              value={formatMoney(balanceDue)}
+              label="Average Order"
+              value={formatMoney(averageOrderValue)}
             />
+            <ProfileStat
+              label="Meals Purchased"
+              value={totalMealsPurchased.toString()}
+            />
+            <ProfileStat label="Balance Due" value={formatMoney(balanceDue)} />
+            <ProfileStat
+              label="Completed Orders"
+              value={completedOrders.toString()}
+            />
+            <ProfileStat label="Customer Since" value={customerSince} />
             <ProfileStat
               label="Last Order"
               value={lastOrder ? formatDate(lastOrder.order_date) : "No orders"}
@@ -2218,7 +3137,7 @@ function CustomerDetailsModal({
               <ContactItem
                 icon={<Phone className="h-4 w-4" />}
                 label="Phone"
-                value={customer.phone || "Not provided"}
+                value={formatPhoneNumber(customer.phone)}
               />
 
               <ContactItem
@@ -2230,9 +3149,7 @@ function CustomerDetailsModal({
           </section>
 
           <section className="rounded-3xl bg-white p-6 shadow-md">
-            <h3 className="text-lg font-bold text-[#081c35]">
-              Dietary Notes
-            </h3>
+            <h3 className="text-lg font-bold text-[#081c35]">Dietary Notes</h3>
 
             <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">
               {customer.dietary_notes || "No dietary notes recorded."}
@@ -2262,7 +3179,10 @@ function CustomerDetailsModal({
               ) : (
                 <div className="mt-5 space-y-3">
                   {favoriteMeals.map(([meal, count], index) => (
-                    <div key={meal} className="flex items-center justify-between rounded-2xl border border-slate-200 p-4">
+                    <div
+                      key={meal}
+                      className="flex items-center justify-between rounded-2xl border border-slate-200 p-4"
+                    >
                       <div>
                         <p className="text-xs font-bold uppercase tracking-wide text-[#d6a817]">
                           #{index + 1} Favorite
@@ -2279,33 +3199,55 @@ function CustomerDetailsModal({
             </div>
 
             <div className="rounded-3xl bg-white p-6 shadow-md">
-              <div className="flex items-center gap-3">
-                <div className="rounded-xl bg-[#081c35] p-3 text-white">
-                  <Repeat2 className="h-5 w-5" />
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="rounded-xl bg-[#081c35] p-3 text-white">
+                    <Repeat2 className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-[#081c35]">Subscription</h3>
+                    <p className="text-sm text-slate-500">Customer recurring-order status.</p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="text-lg font-bold text-[#081c35]">Subscription</h3>
-                  <p className="text-sm text-slate-500">Customer recurring-order status.</p>
-                </div>
+                <button type="button" onClick={() => setEditingSubscription((value) => !value)} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-[#081c35]">
+                  {editingSubscription ? "Close" : "Edit"}
+                </button>
               </div>
-
               <div className="mt-5 rounded-2xl border border-slate-200 p-5">
                 <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Status</p>
-                    <p className="mt-1 text-xl font-bold text-[#081c35]">
-                      {orders.length >= 3 ? "Repeat Customer" : "Not Enrolled"}
-                    </p>
-                  </div>
-                  <StatusBadge value={orders.length >= 3 ? "Active" : "Inactive"} />
+                  <div><p className="text-xs font-bold uppercase text-slate-500">Plan</p><p className="mt-1 text-xl font-bold text-[#081c35]">{subscriptionPlan}</p></div>
+                  <StatusBadge value={subscriptionStatus} />
                 </div>
                 <div className="mt-5 grid grid-cols-2 gap-3">
-                  <ProfileStat label="Completed" value={completedOrders.toString()} />
-                  <ProfileStat label="Orders" value={orders.length.toString()} />
+                  <ProfileStat label="Meals" value={subscriptionMeals} />
+                  <ProfileStat label="Service" value={subscriptionDelivery} />
+                  <ProfileStat label="Day" value={subscriptionDay} />
+                  <ProfileStat label="Status" value={subscriptionStatus.toUpperCase()} />
                 </div>
-                <p className="mt-4 text-xs leading-5 text-slate-500">
-                  Weekly plans, renewal dates, pauses, and automatic billing can be connected when the subscription table is added.
-                </p>
+                {editingSubscription ? (
+                  <div className="mt-5 border-t border-slate-200 pt-5">
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Change plan</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {["Weekly", "Bi-Weekly", "Monthly"].map((plan) => (
+                        <button key={plan} type="button" disabled={subscriptionSaving} onClick={() => void setSubscriptionPlan(plan as "Weekly" | "Bi-Weekly" | "Monthly")} className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold text-[#081c35] hover:border-[#d6a817] disabled:opacity-50">{plan}</button>
+                      ))}
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {subscriptionStatus === "Active" ? (
+                        <button type="button" disabled={subscriptionSaving} onClick={() => void setSubscriptionStatus("Paused")} className="rounded-xl bg-amber-100 px-3 py-2 text-sm font-bold text-amber-800 disabled:opacity-50">Pause</button>
+                      ) : subscriptionStatus === "Paused" ? (
+                        <button type="button" disabled={subscriptionSaving} onClick={() => void setSubscriptionStatus("Active")} className="rounded-xl bg-emerald-100 px-3 py-2 text-sm font-bold text-emerald-800 disabled:opacity-50">Reactivate</button>
+                      ) : null}
+                      {subscriptionStatus !== "Cancelled" && subscriptionTag ? (
+                        <button type="button" disabled={subscriptionSaving} onClick={() => void setSubscriptionStatus("Cancelled")} className="rounded-xl bg-red-100 px-3 py-2 text-sm font-bold text-red-700 disabled:opacity-50">Cancel</button>
+                      ) : null}
+                      {subscriptionStatus === "Cancelled" ? (
+                        <button type="button" disabled={subscriptionSaving} onClick={() => void setSubscriptionStatus("Active")} className="rounded-xl bg-emerald-100 px-3 py-2 text-sm font-bold text-emerald-800 disabled:opacity-50">Reactivate</button>
+                      ) : null}
+                    </div>
+                    {subscriptionSaving ? <p className="mt-3 text-xs font-semibold text-slate-500">Saving subscription...</p> : null}
+                  </div>
+                ) : null}
               </div>
             </div>
           </section>
@@ -2316,12 +3258,16 @@ function CustomerDetailsModal({
                 <CreditCard className="h-5 w-5" />
               </div>
               <div>
-                <h3 className="text-lg font-bold text-[#081c35]">Payment History</h3>
-                <p className="text-sm text-slate-500">Payments recorded on customer orders.</p>
+                <h3 className="text-lg font-bold text-[#081c35]">
+                  Payment History
+                </h3>
+                <p className="text-sm text-slate-500">
+                  Payments recorded on customer orders.
+                </p>
               </div>
             </div>
 
-            {paymentHistory.length === 0 ? (
+            {sortedOrders.length === 0 ? (
               <p className="mt-5 rounded-2xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
                 No payments have been recorded yet.
               </p>
@@ -2331,19 +3277,28 @@ function CustomerDetailsModal({
                   <thead>
                     <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
                       <th className="px-3 py-3">Date</th>
-                      <th className="px-3 py-3">Order</th>
+                      <th className="px-3 py-3 text-right">Payment</th>
+                      <th className="px-3 py-3">Method</th>
                       <th className="px-3 py-3">Status</th>
-                      <th className="px-3 py-3 text-right">Amount</th>
+                      <th className="px-3 py-3 text-right">Balance</th>
+                      <th className="px-3 py-3 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {paymentHistory.map((order) => (
-                      <tr key={order.id} className="border-b border-slate-100 text-sm">
+                    {sortedOrders.map((order) => (
+                      <tr key={order.id} className="border-b border-slate-100 text-sm hover:bg-slate-50">
                         <td className="px-3 py-4 text-slate-600">{formatDate(order.order_date)}</td>
-                        <td className="px-3 py-4 font-semibold text-[#081c35]">{order.order_number}</td>
+                        <td className="px-3 py-4 text-right font-bold text-[#081c35]">{formatMoney(Number(order.amount_paid || 0))}</td>
+                        <td className="px-3 py-4 text-slate-600">Not recorded</td>
                         <td className="px-3 py-4"><StatusBadge value={order.payment_status} /></td>
-                        <td className="px-3 py-4 text-right font-bold text-[#081c35]">
-                          {formatMoney(Number(order.amount_paid || 0))}
+                        <td className="px-3 py-4 text-right font-bold text-red-700">{formatMoney(Number(order.balance_due || 0))}</td>
+                        <td className="px-3 py-4 text-right">
+                          <div className="flex justify-end gap-2">
+                            <button type="button" onClick={() => printCustomerOrder(order)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-[#081c35]">Receipt</button>
+                            <button type="button" disabled={paymentSavingId === order.id} onClick={() => void setOrderPayment(order, order.payment_status.toLowerCase() !== "paid")} className={`rounded-lg px-3 py-2 text-xs font-bold disabled:opacity-50 ${order.payment_status.toLowerCase() === "paid" ? "bg-slate-200 text-slate-700" : "bg-emerald-100 text-emerald-800"}`}>
+                              {paymentSavingId === order.id ? "Saving..." : order.payment_status.toLowerCase() === "paid" ? "Mark Unpaid" : "Mark Paid"}
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -2351,6 +3306,91 @@ function CustomerDetailsModal({
                 </table>
               </div>
             )}
+          </section>
+
+          <section className="grid gap-6 lg:grid-cols-2">
+            <div className="rounded-3xl bg-white p-6 shadow-md">
+              <div className="flex items-center gap-3">
+                <div className="rounded-xl bg-[#d6a817] p-3 text-[#081c35]">
+                  <NotebookPen className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-[#081c35]">
+                    Internal CRM Notes
+                  </h3>
+                  <p className="text-sm text-slate-500">
+                    Private notes for your team.
+                  </p>
+                </div>
+              </div>
+              <textarea
+                value={crmNotes}
+                onChange={(event) => {
+                  setCrmNotes(event.target.value);
+                  setNotesSaved(false);
+                  setNotesError("");
+                }}
+                rows={7}
+                disabled={notesLoading || notesSaving}
+                placeholder={
+                  notesLoading
+                    ? "Loading notes from Supabase..."
+                    : "Add follow-up notes, preferences, concerns, or reminders..."
+                }
+                className="mt-5 w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm text-[#081c35] outline-none focus:border-[#d6a817] disabled:bg-slate-50"
+              />
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <div>
+                  <p className={`text-xs font-semibold ${notesError ? "text-red-700" : "text-emerald-700"}`}>
+                    {notesError || (notesSaved ? "Notes saved to Supabase" : "")}
+                  </p>
+                  {!notesError && notesUpdatedAt ? (
+                    <p className="mt-1 text-xs text-slate-400">
+                      Last updated {new Date(notesUpdatedAt).toLocaleString()}
+                    </p>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  onClick={saveCrmNotes}
+                  disabled={notesLoading || notesSaving}
+                  className="rounded-xl bg-[#081c35] px-4 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {notesSaving ? "Saving..." : "Save Notes"}
+                </button>
+              </div>
+            </div>
+
+            <div className="rounded-3xl bg-white p-6 shadow-md">
+              <h3 className="text-lg font-bold text-[#081c35]">
+                Activity Timeline
+              </h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Recent customer order activity.
+              </p>
+              {activityItems.length === 0 ? (
+                <p className="mt-5 rounded-2xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
+                  Activity will appear when orders are created.
+                </p>
+              ) : (
+                <div className="mt-5 space-y-4">
+                  {activityItems.map((item) => (
+                    <div key={item.id} className="flex gap-3">
+                      <div className="mt-1 h-3 w-3 shrink-0 rounded-full bg-[#d6a817]" />
+                      <div className="min-w-0 border-b border-slate-100 pb-4 last:border-b-0">
+                        <p className="font-bold text-[#081c35]">{item.title}</p>
+                        <p className="mt-1 text-sm text-slate-600">
+                          {item.detail}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-400">
+                          {formatDate(item.date.slice(0, 10))}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </section>
 
           <section className="rounded-3xl bg-white p-6 shadow-md">
@@ -2372,76 +3412,65 @@ function CustomerDetailsModal({
               </div>
             ) : (
               <div className="mt-5 space-y-3">
-                {orders.map((order) => (
-                  <div
-                    key={order.id}
-                    className="rounded-2xl border border-slate-200 p-4"
-                  >
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <p className="font-bold text-[#081c35]">
-                          {order.order_number}
-                        </p>
+                {orders.map((order) => {
+                  const expanded = expandedOrderId === order.id;
+                  const details = parseOrderDetails(order.notes);
+                  return (
+                    <div key={order.id} className="overflow-hidden rounded-2xl border border-slate-200">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedOrderId(expanded ? null : order.id)}
+                        className="flex w-full flex-col gap-3 p-4 text-left hover:bg-slate-50 sm:flex-row sm:items-center sm:justify-between"
+                      >
+                        <div className="flex items-start gap-3">
+                          <span className="mt-0.5 text-lg font-bold text-[#d6a817]">{expanded ? "−" : "+"}</span>
+                          <div>
+                            <p className="font-bold text-[#081c35]">{order.order_number}</p>
+                            <p className="mt-1 text-xs text-slate-500">Ordered {formatDate(order.order_date)}{order.fulfillment_date ? ` • Fulfillment ${formatDate(order.fulfillment_date)}` : ""}</p>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <StatusBadge value={order.order_status} />
+                          <StatusBadge value={order.payment_status} />
+                          <span className="ml-1 font-bold text-[#081c35]">{formatMoney(Number(order.total || 0))}</span>
+                        </div>
+                      </button>
 
-                        <p className="mt-1 text-xs text-slate-500">
-                          Ordered {formatDate(order.order_date)}
-                          {order.fulfillment_date
-                            ? ` • Fulfillment ${formatDate(
-                                order.fulfillment_date,
-                              )}`
-                            : ""}
-                        </p>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-2">
-                        <StatusBadge value={order.order_status} />
-                        <StatusBadge value={order.payment_status} />
-                      </div>
+                      {expanded ? (
+                        <div className="border-t border-slate-200 bg-slate-50 p-5">
+                          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                            <OrderInfoCard label="Meals" value={`${details.numberOfMeals} • ${details.mealPlan}`} />
+                            <OrderInfoCard label="Delivery" value={`${order.delivery_method || "Pickup"}${order.fulfillment_date ? ` • ${formatDate(order.fulfillment_date)}` : ""}`} />
+                            <OrderInfoCard label="Invoice Total" value={formatMoney(Number(order.total || 0))} />
+                            <OrderInfoCard label="Payment" value={`${formatMoney(Number(order.amount_paid || 0))} paid • ${order.payment_status}`} />
+                            <OrderInfoCard label="Balance" value={formatMoney(Number(order.balance_due || 0))} emphasize={Number(order.balance_due || 0) > 0} />
+                            <OrderInfoCard label="Notes" value={details.freeformNotes || "No notes recorded."} />
+                          </div>
+                          <div className="mt-5 flex flex-wrap gap-3">
+                            <button type="button" disabled={paymentSavingId === order.id} onClick={() => void setOrderPayment(order, order.payment_status.toLowerCase() !== "paid")} className={`inline-flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-bold disabled:opacity-50 ${order.payment_status.toLowerCase() === "paid" ? "bg-slate-200 text-slate-700" : "bg-emerald-100 text-emerald-800"}`}>
+                              {paymentSavingId === order.id ? "Saving..." : order.payment_status.toLowerCase() === "paid" ? "Mark Unpaid" : "Mark Paid"}
+                            </button>
+                            <button type="button" onClick={() => printCustomerOrder(order)} className="inline-flex items-center gap-2 rounded-xl bg-[#081c35] px-4 py-3 text-sm font-bold text-white">
+                              <Printer className="h-4 w-4" /> Print Invoice
+                            </button>
+                            <button type="button" onClick={() => onCreateOrder(order)} className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-[#081c35]">
+                              <Copy className="h-4 w-4" /> Duplicate Order
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
-
-                    <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl bg-slate-50 p-3 text-sm">
-                      <div>
-                        <p className="text-xs uppercase tracking-wide text-slate-500">
-                          Total
-                        </p>
-                        <p className="mt-1 font-bold text-[#081c35]">
-                          {formatMoney(Number(order.total || 0))}
-                        </p>
-                      </div>
-
-                      <div>
-                        <p className="text-xs uppercase tracking-wide text-slate-500">
-                          Balance
-                        </p>
-                        <p className="mt-1 font-bold text-red-700">
-                          {formatMoney(Number(order.balance_due || 0))}
-                        </p>
-                      </div>
-                    </div>
-
-                    {order.notes ? (
-                      <p className="mt-3 text-sm leading-6 text-slate-600">
-                        {order.notes}
-                      </p>
-                    ) : null}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
-            )}
-          </section>
+            )}          </section>
         </div>
       </div>
     </div>
   );
 }
 
-function ProfileStat({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
+function ProfileStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-2xl bg-white p-5 shadow-md">
       <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
@@ -2477,15 +3506,8 @@ function ContactItem({
   );
 }
 
-
 function OrderWizardProgress({ currentStep }: { currentStep: number }) {
-  const steps = [
-    "Customer",
-    "Meal Plan",
-    "Schedule",
-    "Payment",
-    "Review",
-  ];
+  const steps = ["Customer", "Meal Plan", "Schedule", "Payment", "Review"];
 
   return (
     <div className="grid grid-cols-5 gap-2">
@@ -2568,10 +3590,7 @@ function OrderReview({
   );
 }
 
-function validateOrderStep(
-  step: number,
-  form: OrderFormState,
-): string | null {
+function validateOrderStep(step: number, form: OrderFormState): string | null {
   if (step === 1 && !form.customer_id) {
     return "Select a customer before continuing.";
   }
@@ -2586,7 +3605,6 @@ function validateOrderStep(
 
   return null;
 }
-
 
 function Modal({
   eyebrow,
@@ -2614,9 +3632,7 @@ function Modal({
               {eyebrow}
             </p>
 
-            <h2 className="mt-1 text-2xl font-bold text-[#081c35]">
-              {title}
-            </h2>
+            <h2 className="mt-1 text-2xl font-bold text-[#081c35]">{title}</h2>
           </div>
 
           <button
@@ -2700,21 +3716,16 @@ function MetricCard({
             {label}
           </p>
 
-          <p className="mt-2 text-2xl font-bold text-[#081c35]">
-            {value}
-          </p>
+          <p className="mt-2 text-2xl font-bold text-[#081c35]">{value}</p>
 
           <p className="mt-1 text-xs text-slate-500">{detail}</p>
         </div>
 
-        <div className="rounded-xl bg-[#081c35] p-3 text-white">
-          {icon}
-        </div>
+        <div className="rounded-xl bg-[#081c35] p-3 text-white">{icon}</div>
       </div>
     </div>
   );
 }
-
 
 function ProductionMetric({
   label,
@@ -2734,15 +3745,11 @@ function ProductionMetric({
           <p className="text-xs font-bold uppercase tracking-wide text-slate-500">
             {label}
           </p>
-          <p className="mt-2 text-3xl font-bold text-[#081c35]">
-            {value}
-          </p>
+          <p className="mt-2 text-3xl font-bold text-[#081c35]">{value}</p>
           <p className="mt-1 text-xs text-slate-500">{detail}</p>
         </div>
 
-        <div className="rounded-xl bg-[#d6a817] p-3 text-[#081c35]">
-          {icon}
-        </div>
+        <div className="rounded-xl bg-[#d6a817] p-3 text-[#081c35]">{icon}</div>
       </div>
     </div>
   );
@@ -2753,14 +3760,11 @@ function ProductionStatusBadge({ value }: { value: string }) {
     "bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-200";
 
   if (value === "Prep Today") {
-    className =
-      "bg-red-50 text-red-700 ring-1 ring-inset ring-red-200";
+    className = "bg-red-50 text-red-700 ring-1 ring-inset ring-red-200";
   } else if (value === "Prep Tomorrow") {
-    className =
-      "bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200";
+    className = "bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200";
   } else if (value === "Upcoming") {
-    className =
-      "bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200";
+    className = "bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200";
   }
 
   return (
@@ -2823,16 +3827,12 @@ function OrderSummary({ form }: { form: OrderFormState }) {
     <div className="grid gap-3 rounded-2xl bg-slate-50 p-4 text-sm md:grid-cols-2">
       <div className="flex items-center justify-between gap-4">
         <span className="text-slate-500">Order Total</span>
-        <span className="font-bold text-[#081c35]">
-          {formatMoney(total)}
-        </span>
+        <span className="font-bold text-[#081c35]">{formatMoney(total)}</span>
       </div>
 
       <div className="flex items-center justify-between gap-4">
         <span className="text-slate-500">Balance Due</span>
-        <span className="font-bold text-red-700">
-          {formatMoney(balance)}
-        </span>
+        <span className="font-bold text-red-700">{formatMoney(balance)}</span>
       </div>
     </div>
   );
@@ -2844,21 +3844,14 @@ function StatusBadge({ value }: { value: string }) {
   let className =
     "bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-200";
 
-  if (
-    ["active", "completed", "paid", "confirmed"].includes(normalized)
-  ) {
-    className =
-      "bg-green-50 text-green-700 ring-1 ring-inset ring-green-200";
+  if (["active", "completed", "paid", "confirmed"].includes(normalized)) {
+    className = "bg-green-50 text-green-700 ring-1 ring-inset ring-green-200";
   } else if (
     ["pending", "partial", "in progress", "lead"].includes(normalized)
   ) {
-    className =
-      "bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200";
-  } else if (
-    ["cancelled", "inactive", "unpaid"].includes(normalized)
-  ) {
-    className =
-      "bg-red-50 text-red-700 ring-1 ring-inset ring-red-200";
+    className = "bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200";
+  } else if (["cancelled", "inactive", "unpaid"].includes(normalized)) {
+    className = "bg-red-50 text-red-700 ring-1 ring-inset ring-red-200";
   }
 
   return (
@@ -2869,8 +3862,6 @@ function StatusBadge({ value }: { value: string }) {
     </span>
   );
 }
-
-
 
 function getProductionStatus(fulfillmentDate: string | null) {
   if (!fulfillmentDate) {
@@ -2922,8 +3913,7 @@ function parseOrderDetails(notes?: string | null) {
     value.match(/^Meal Plan:\s*(.+)$/im)?.[1]?.trim() || "Not specified";
 
   const numberOfMeals =
-    value.match(/^Number of Meals:\s*(.+)$/im)?.[1]?.trim() ||
-    "Not specified";
+    value.match(/^Number of Meals:\s*(.+)$/im)?.[1]?.trim() || "Not specified";
 
   const pickupDeliveryDate =
     value.match(/^Pickup\/Delivery Date:\s*(.+)$/im)?.[1]?.trim() ||
@@ -2934,7 +3924,11 @@ function parseOrderDetails(notes?: string | null) {
     "Not scheduled";
 
   const freeformNotes = value.includes("Notes:")
-    ? value.split(/Notes:\s*/i).slice(1).join("Notes:").trim()
+    ? value
+        .split(/Notes:\s*/i)
+        .slice(1)
+        .join("Notes:")
+        .trim()
     : value
         .split("\n")
         .filter(
