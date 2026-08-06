@@ -165,7 +165,24 @@ export default function KitchenPage() {
   const [startingProduction, setStartingProduction] = useState(false);
   const [selectedProductionOrders, setSelectedProductionOrders] = useState<Set<string>>(new Set());
   const [completionOrder, setCompletionOrder] = useState<string[] | null>(null);
+  const [reopenOrder, setReopenOrder] = useState<string[] | null>(null);
+  const [reopenReason, setReopenReason] = useState("");
+  const [canReopenProduction, setCanReopenProduction] = useState(false);
+  const [reopeningProduction, setReopeningProduction] = useState(false);
   const [, setQueueClock] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!businessId) return;
+    let active=true;
+    const loadPermission=async()=>{
+      const {data:{user}}=await supabase.auth.getUser();
+      if(!user||!active)return;
+      const {data}=await supabase.from("gbgs_business_members").select("role").eq("business_id",businessId).eq("user_id",user.id).maybeSingle();
+      if(active)setCanReopenProduction(["owner","admin","manager"].includes(String(data?.role??"").toLowerCase()));
+    };
+    void loadPermission();
+    return()=>{active=false;};
+  },[businessId]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -711,6 +728,23 @@ export default function KitchenPage() {
       setProductionActionError(true);
       setProductionActionMessage(caught instanceof Error ? caught.message : "Production action failed.");
     }
+  }
+
+  async function reopenProduction() {
+    if (!reopenOrder || !businessId || !reopenReason.trim()) return;
+    setReopeningProduction(true);
+    try {
+      const { error } = await supabase.rpc("gbgs_reopen_production_order", { p_business_id: businessId, p_order_id: reopenOrder[6], p_reason: reopenReason.trim() });
+      if (error) throw error;
+      setProductionActionError(false);
+      setProductionActionMessage("Production reopened successfully.");
+      setReopenOrder(null);
+      setReopenReason("");
+      setRefreshVersion((version) => version + 1);
+    } catch (caught) {
+      setProductionActionError(true);
+      setProductionActionMessage(caught instanceof Error ? caught.message : "Production could not be reopened.");
+    } finally { setReopeningProduction(false); }
   }
 
   function elapsedProductionTime(order: string[]) {
@@ -1263,6 +1297,8 @@ export default function KitchenPage() {
                         {order[5] === "Paused" && <button onClick={() => void handleProductionAction(order, "resume")} className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white">Resume</button>}
                         {["Cooking", "Paused"].includes(order[5]) && <button onClick={() => void handleProductionAction(order, "stop")} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white">Stop</button>}
                         {["Cooking", "Paused"].includes(order[5]) && <button onClick={() => setCompletionOrder(order)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white">Complete</button>}
+                        {order[5] === "Packaging" && <div className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700">Production Completed</div>}
+                        {order[5] === "Packaging" && canReopenProduction && <div className="rounded-lg border border-slate-200 p-2"><p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Manager Actions</p><button onClick={() => { setReopenOrder(order); setReopenReason(""); }} className="rounded-lg bg-[#081c35] px-3 py-1.5 text-xs font-bold text-white">Reopen Production</button></div>}
                       </div>
                     </td>
 
@@ -1771,6 +1807,23 @@ export default function KitchenPage() {
           <div className="mt-7 flex justify-end gap-3">
             <button onClick={() => setCompletionOrder(null)} className="rounded-xl border px-5 py-3 font-bold">Cancel</button>
             <button onClick={() => { const order=completionOrder; setCompletionOrder(null); void handleProductionAction(order, "complete"); }} className="rounded-xl bg-emerald-600 px-5 py-3 font-bold text-white">Complete Production</button>
+          </div>
+        </div>
+      </div>}
+
+      {reopenOrder && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/70 p-4">
+        <div role="dialog" aria-modal="true" aria-labelledby="reopen-production-title" className="w-full max-w-lg rounded-3xl bg-white p-7 shadow-2xl">
+          <div className="flex items-start justify-between gap-4">
+            <div><p className="text-xs font-bold uppercase tracking-[.2em] text-[#d6a817]">Manager Action</p><h2 id="reopen-production-title" className="mt-1 text-2xl font-bold">Reopen Production?</h2></div>
+            <button disabled={reopeningProduction} onClick={() => setReopenOrder(null)} aria-label="Close"><X /></button>
+          </div>
+          <p className="mt-5 text-slate-700">This will reopen a completed production order.</p>
+          <p className="mt-2 font-semibold text-slate-700">This action will be permanently recorded.</p>
+          <p className="mt-4 text-sm text-slate-600">{reopenOrder[1]} · MR-{reopenOrder[0]} · {reopenOrder[2]}</p>
+          <label className="mt-6 block"><span className="mb-2 block text-sm font-bold">Reason <span className="text-red-600">*</span></span><textarea required rows={4} value={reopenReason} onChange={(event) => setReopenReason(event.target.value)} placeholder="Why is production being reopened?" className="w-full rounded-xl border border-slate-300 p-3 outline-none focus:border-[#d6a817]" /></label>
+          <div className="mt-7 flex justify-end gap-3">
+            <button disabled={reopeningProduction} onClick={() => setReopenOrder(null)} className="rounded-xl border px-5 py-3 font-bold">Cancel</button>
+            <button disabled={reopeningProduction || !reopenReason.trim()} onClick={() => void reopenProduction()} className="rounded-xl bg-[#081c35] px-5 py-3 font-bold text-white disabled:opacity-50">{reopeningProduction ? "Reopening..." : "Reopen Production"}</button>
           </div>
         </div>
       </div>}
