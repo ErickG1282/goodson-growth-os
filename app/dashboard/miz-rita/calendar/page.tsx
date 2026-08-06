@@ -7,7 +7,7 @@ import { supabase } from "@/lib/supabase";
 
 type View = "Month" | "Week" | "Day";
 type Customer = { id: string; first_name: string; last_name: string | null; phone: string | null };
-type Order = { id: string; customer_id: string; order_number: string; meal_count: number; fulfillment_date: string | null; order_status: string; payment_status: string; balance_due: number; delivery_method: string | null; notes: string | null };
+type Order = { id: string; customer_id: string; order_number: string; meal_count: number; fulfillment_date: string | null; order_status: string; production_status: string | null; payment_status: string; balance_due: number; delivery_method: string | null; notes: string | null };
 type Delivery = { id: string; order_id: string; delivery_type: "Pickup" | "Delivery"; driver_name: string | null; driver_phone: string | null; status: string; scheduled_at: string | null; address: string | null; notes: string | null };
 type ManualEvent = { id: string; user_id: string; title: string; event_date: string; start_time: string | null; end_time: string | null; location: string | null; notes: string | null; completed: boolean; created_at: string; updated_at: string; source: string | null; source_id: string | null; category: string | null };
 type CalendarEvent = {
@@ -47,7 +47,7 @@ export default function CalendarPage() {
       setBusinessId(business.id);
       const [customerResult, orderResult, deliveryResult, eventResult] = await Promise.all([
         supabase.from("gbgs_customers").select("id, first_name, last_name, phone").eq("business_id", business.id),
-        supabase.from("gbgs_orders").select("id, customer_id, order_number, meal_count, fulfillment_date, order_status, payment_status, balance_due, delivery_method, notes").eq("business_id", business.id),
+        supabase.from("gbgs_orders").select("id, customer_id, order_number, meal_count, fulfillment_date, order_status, production_status, payment_status, balance_due, delivery_method, notes").eq("business_id", business.id),
         supabase.from("gbgs_deliveries").select("id, order_id, delivery_type, driver_name, driver_phone, status, scheduled_at, address, notes").eq("business_id", business.id),
         supabase.from("gbgs_calendar_events").select("*").eq("user_id", user.id).order("event_date").order("start_time"),
       ]);
@@ -80,16 +80,19 @@ export default function CalendarPage() {
       const delivery = deliveries.find((item) => item.order_id === order?.id);
       const fulfillment = event.source === "Order";
       const startsAt = combineDateTime(event.event_date, event.start_time ?? "12:00");
-      return { id: `${fulfillment ? "fulfillment" : "manual"}-${event.id}`, source: fulfillment ? "delivery" : "manual", title: event.title, type: fulfillment ? delivery?.delivery_type ?? order?.delivery_method ?? "Pickup" : event.category ?? "Special Event", startsAt, customer: customer(order?.customer_id ?? ""), order, delivery, notes: event.notes ?? "", status: event.completed ? "Completed" : "Scheduled" };
+      const type = fulfillment ? delivery?.delivery_type ?? order?.delivery_method ?? "Pickup" : event.category ?? "Special Event";
+      return { id: `${fulfillment ? "fulfillment" : "manual"}-${event.id}`, source: fulfillment ? "delivery" : "manual", title: fulfillment ? type : event.title, type, startsAt, customer: customer(order?.customer_id ?? ""), order, delivery, notes: event.notes ?? "", status: fulfillment ? delivery?.status ?? productionStatus(order) : event.completed ? "Completed" : "Scheduled" };
     });
+    const linkedFulfillmentOrders = new Set(manualEvents.filter((event) => event.source === "Order" && event.source_id).map((event) => event.source_id));
     orders.forEach((order) => {
       if (!order.fulfillment_date) return;
       const details = parseNotes(order.notes);
       const at = combineDateTime(order.fulfillment_date, details.pickupTime);
       const orderCustomer = customer(order.customer_id);
       const delivery = deliveries.find((item) => item.order_id === order.id);
-      mapped.push({ id: `kitchen-${order.id}`, source: "order", title: `Kitchen · ${order.order_number}`, type: "Kitchen Production", startsAt: combineDateTime(order.fulfillment_date, "08:00"), customer: orderCustomer, order, notes: details.notes, status: order.order_status });
+      mapped.push({ id: `kitchen-${order.id}`, source: "order", title: "Kitchen", type: "Kitchen Production", startsAt: combineDateTime(order.fulfillment_date, "08:00"), customer: orderCustomer, order, notes: details.notes, status: productionStatus(order) });
       mapped.push({ id: `due-${order.id}`, source: "order", title: `Order Due · ${order.order_number}`, type: "Order Due", startsAt: at, customer: orderCustomer, order, notes: details.notes, status: order.order_status });
+      if (delivery && !linkedFulfillmentOrders.has(order.id)) mapped.push({ id: `fulfillment-${order.id}`, source: "delivery", title: delivery.delivery_type, type: delivery.delivery_type, startsAt: delivery.scheduled_at ?? at, customer: orderCustomer, order, delivery, notes: delivery.notes ?? details.notes, status: delivery.status });
       if (Number(order.balance_due) > 0) mapped.push({ id: `payment-${order.id}`, source: "order", title: `Payment Due · ${order.order_number}`, type: "Payment Due", startsAt: at, customer: orderCustomer, order, notes: `Balance due: $${Number(order.balance_due).toFixed(2)}`, status: order.payment_status });
     });
     return mapped.sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
@@ -154,10 +157,11 @@ function CalendarView({ view, focusDate, events, onEvent, onDay }: { view: View;
   }
   const start = startOfWeek(focusDate);
   const days = view === "Week" ? Array.from({ length: 7 }, (_, index) => { const date = new Date(start); date.setDate(start.getDate() + index); return date; }) : [focusDate];
-  return <div className={`grid ${view === "Week" ? "grid-cols-1 md:grid-cols-7" : "grid-cols-1"}`}>{days.map((date) => <div key={localKey(date)} className="min-h-[520px] border-r p-3"><button onClick={() => onDay(date)} className="mb-4 w-full border-b pb-3 text-center font-bold">{weekdays[date.getDay()]} <span className="block text-2xl">{date.getDate()}</span></button><div className="space-y-2">{events.filter((event) => sameDay(event.startsAt, date)).map((event) => <button key={event.id} onClick={() => onEvent(event)} className={`w-full rounded-xl border-l-4 p-3 text-left text-sm shadow-sm ${eventColor(event)}`}><p className="font-bold">{event.title}</p><p className="mt-1 opacity-75">{new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(new Date(event.startsAt))}</p></button>)}</div></div>)}</div>;
+  return <div className={`grid ${view === "Week" ? "grid-cols-1 md:grid-cols-7" : "grid-cols-1"}`}>{days.map((date) => <div key={localKey(date)} className="min-h-[520px] border-r p-3"><button onClick={() => onDay(date)} className="mb-4 w-full border-b pb-3 text-center font-bold">{weekdays[date.getDay()]} <span className="block text-2xl">{date.getDate()}</span></button><div className="space-y-2">{events.filter((event) => sameDay(event.startsAt, date)).map((event) => <button key={event.id} onClick={() => onEvent(event)} className={`w-full rounded-xl border-l-4 p-3 text-left text-sm shadow-sm ${eventColor(event)}`}><EventSummary event={event} /><p className="mt-1 opacity-75">{new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(new Date(event.startsAt))}</p></button>)}</div></div>)}</div>;
 }
-function EventChip({ event, onClick }: { event: CalendarEvent; onClick: () => void }) { return <button onClick={onClick} className={`block w-full truncate rounded-md border-l-4 px-2 py-1 text-left text-[11px] font-bold ${eventColor(event)}`}>{event.title}</button>; }
-function TodayGroup({ label, events, onSelect, late }: { label: string; events: CalendarEvent[]; onSelect: (event: CalendarEvent) => void; late?: boolean }) { return <section className="rounded-2xl bg-white p-4 shadow-sm"><div className="flex items-center justify-between"><h3 className="font-bold">{label}</h3><span className={`rounded-full px-2 py-1 text-xs font-bold ${late ? "bg-red-100 text-red-700" : "bg-slate-100"}`}>{events.length}</span></div><div className="mt-3 space-y-2">{events.slice(0, 5).map((event) => <button key={event.id} onClick={() => onSelect(event)} className="block w-full rounded-lg bg-slate-50 p-2 text-left text-sm"><p className="font-bold">{event.title}</p><p className="text-xs text-slate-500">{dateTime(event.startsAt)}</p></button>)}{!events.length && <p className="text-sm text-slate-400">Nothing scheduled.</p>}</div></section>; }
+function EventSummary({ event }: { event: CalendarEvent }) { return <div className="leading-tight"><p className="font-bold">{event.type === "Kitchen Production" ? "Kitchen" : event.title}</p>{event.customer && <p className="mt-1">{customerName(event.customer)}</p>}{event.order && <p>{event.order.order_number}</p>}{event.type === "Delivery" && <p>Driver: {event.delivery?.driver_name || "Not Assigned"}</p>}<p>Status: {event.status}</p></div>; }
+function EventChip({ event, onClick }: { event: CalendarEvent; onClick: () => void }) { return <button onClick={onClick} className={`block w-full rounded-md border-l-4 px-2 py-1 text-left text-[11px] ${eventColor(event)}`}><EventSummary event={event} /></button>; }
+function TodayGroup({ label, events, onSelect, late }: { label: string; events: CalendarEvent[]; onSelect: (event: CalendarEvent) => void; late?: boolean }) { return <section className="rounded-2xl bg-white p-4 shadow-sm"><div className="flex items-center justify-between"><h3 className="font-bold">{label}</h3><span className={`rounded-full px-2 py-1 text-xs font-bold ${late ? "bg-red-100 text-red-700" : "bg-slate-100"}`}>{events.length}</span></div><div className="mt-3 space-y-2">{events.slice(0, 5).map((event) => <button key={event.id} onClick={() => onSelect(event)} className="block w-full rounded-lg bg-slate-50 p-2 text-left text-sm"><EventSummary event={event} /><p className="mt-1 text-xs text-slate-500">{dateTime(event.startsAt)}</p></button>)}{!events.length && <p className="text-sm text-slate-400">Nothing scheduled.</p>}</div></section>; }
 
 function EventProfile({ event, onClose, onEdit, onDelete }: { event: CalendarEvent; onClose: () => void; onEdit: () => void; onDelete: () => void }) {
   const details = parseNotes(event.order?.notes ?? null);
@@ -178,9 +182,25 @@ function eventColor(event: CalendarEvent) {
   if ((event.type === "Order Due" || event.type === "Payment Due") && new Date(event.startsAt) < new Date() && !["Completed", "Paid"].includes(event.status)) return "border-red-600 bg-red-50 text-red-800";
   if (event.type === "Pickup") return "border-blue-600 bg-blue-50 text-blue-800";
   if (event.type === "Delivery") return "border-emerald-600 bg-emerald-50 text-emerald-800";
+  if (event.type === "Kitchen Production" && event.status === "Packaging") return "border-purple-600 bg-purple-50 text-purple-800";
+  if (event.type === "Kitchen Production" && event.status === "Ready For Pickup") return "border-blue-600 bg-blue-50 text-blue-800";
+  if (event.type === "Kitchen Production" && ["Out For Delivery", "Delivered"].includes(event.status)) return "border-emerald-600 bg-emerald-50 text-emerald-800";
   if (event.type === "Kitchen Production") return "border-orange-500 bg-orange-50 text-orange-800";
   if (event.type === "Appointment") return "border-purple-600 bg-purple-50 text-purple-800";
   return "border-slate-500 bg-slate-50 text-slate-700";
+}
+function productionStatus(order?: Order) {
+  if (!order) return "Scheduled";
+  const persisted = order.production_status?.trim();
+  if (persisted) return persisted === "Ready" ? "Ready For Pickup" : persisted;
+  const status = order.order_status.trim().toLowerCase();
+  if (status === "paused") return "Paused";
+  if (status === "packaging") return "Packaging";
+  if (status === "ready" || status === "ready for pickup") return "Ready For Pickup";
+  if (status === "out for delivery") return "Out For Delivery";
+  if (status === "delivered" || status === "completed") return "Delivered";
+  if (["cooking", "preparing", "kitchen", "paid"].includes(status)) return "Cooking";
+  return "Waiting";
 }
 function parseNotes(notes: string | null) {
   const text = notes ?? ""; const value = (label: string, fallback: string) => text.match(new RegExp(`^${label}:\\s*(.+)$`, "im"))?.[1]?.trim() || fallback;

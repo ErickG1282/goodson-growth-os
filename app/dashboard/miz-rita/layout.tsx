@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { NotificationBell } from "@/components/miz-rita/notification-bell";
 
 const tabs = [
   { name: "Dashboard", href: "/dashboard/miz-rita", enabled: true },
@@ -14,6 +15,7 @@ const tabs = [
   { name: "Payments", href: "/dashboard/miz-rita/payments", enabled: true },
   { name: "Inventory", href: "/dashboard/miz-rita/inventory", enabled: true },
   { name: "Calendar", href: "/dashboard/miz-rita/calendar", enabled: true },
+  { name: "Notifications", href: "/dashboard/miz-rita/notifications", enabled: true },
   { name: "Reports", href: "/dashboard/miz-rita/reports", enabled: true },
 ];
 
@@ -28,9 +30,7 @@ export default function MizRitaLayout({
     <div className="min-h-screen bg-slate-100">
       <div className="lg:ml-64 border-b bg-white shadow-sm">
         <div className="px-6 py-5">
-          <h1 className="text-2xl font-bold text-slate-800">
-            Miz Rita HQ
-          </h1>
+          <div className="flex items-center justify-between gap-4"><h1 className="text-2xl font-bold text-slate-800">Miz Rita HQ</h1><NotificationBell /></div>
 
           <div className="mt-5 flex flex-wrap gap-2">
             {tabs.map((tab) => {

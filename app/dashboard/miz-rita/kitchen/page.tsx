@@ -164,6 +164,7 @@ export default function KitchenPage() {
   const [productionActionError, setProductionActionError] = useState(false);
   const [startingProduction, setStartingProduction] = useState(false);
   const [selectedProductionOrders, setSelectedProductionOrders] = useState<Set<string>>(new Set());
+  const [completionOrder, setCompletionOrder] = useState<string[] | null>(null);
   const [, setQueueClock] = useState(() => Date.now());
 
   useEffect(() => {
@@ -1261,7 +1262,7 @@ export default function KitchenPage() {
                         {order[5] === "Cooking" && <button onClick={() => void handleProductionAction(order, "pause")} className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-white">Pause</button>}
                         {order[5] === "Paused" && <button onClick={() => void handleProductionAction(order, "resume")} className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white">Resume</button>}
                         {["Cooking", "Paused"].includes(order[5]) && <button onClick={() => void handleProductionAction(order, "stop")} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white">Stop</button>}
-                        {["Cooking", "Paused"].includes(order[5]) && <button onClick={() => void handleProductionAction(order, "complete")} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white">Complete</button>}
+                        {["Cooking", "Paused"].includes(order[5]) && <button onClick={() => setCompletionOrder(order)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white">Complete</button>}
                       </div>
                     </td>
 
@@ -1753,6 +1754,26 @@ export default function KitchenPage() {
         )}
 
       </div>
+
+      {completionOrder && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/70 p-4">
+        <div role="dialog" aria-modal="true" aria-labelledby="complete-production-title" className="w-full max-w-lg rounded-3xl bg-white p-7 shadow-2xl">
+          <div className="flex items-start justify-between gap-4">
+            <div><p className="text-xs font-bold uppercase tracking-[.2em] text-[#d6a817]">Production Workflow</p><h2 id="complete-production-title" className="mt-1 text-2xl font-bold">Complete Production?</h2></div>
+            <button onClick={() => setCompletionOrder(null)} aria-label="Close"><X /></button>
+          </div>
+          <dl className="mt-6 grid grid-cols-2 gap-3 rounded-2xl bg-slate-50 p-4 text-sm">
+            <div><dt className="text-slate-500">Customer Name</dt><dd className="font-bold">{completionOrder[1]}</dd></div>
+            <div><dt className="text-slate-500">Order Number</dt><dd className="font-bold">MR-{completionOrder[0]}</dd></div>
+            <div><dt className="text-slate-500">Meal Count</dt><dd className="font-bold">{completionOrder[2]}</dd></div>
+            <div><dt className="text-slate-500">Current Status</dt><dd className="font-bold">{completionOrder[5]}</dd></div>
+          </dl>
+          <p className="mt-6 whitespace-pre-line text-slate-700">{"Completing production will move this order into Packaging.\n\nAre you sure you want to continue?"}</p>
+          <div className="mt-7 flex justify-end gap-3">
+            <button onClick={() => setCompletionOrder(null)} className="rounded-xl border px-5 py-3 font-bold">Cancel</button>
+            <button onClick={() => { const order=completionOrder; setCompletionOrder(null); void handleProductionAction(order, "complete"); }} className="rounded-xl bg-emerald-600 px-5 py-3 font-bold text-white">Complete Production</button>
+          </div>
+        </div>
+      </div>}
 
       {showCookingList && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-[#020b16]/80 p-4 backdrop-blur-sm print:hidden md:p-8">
