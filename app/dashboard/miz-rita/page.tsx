@@ -41,6 +41,7 @@ import {
 import Link from "next/link";
 
 import { SidebarContent } from "@/components/dashboard/sidebar";
+import { TodaysAlerts } from "@/components/miz-rita/todays-alerts";
 import { supabase } from "@/lib/supabase";
 import { queryProductionQueue, summarizeProductionQueue, type ProductionQueueOrder, type ProductionQueueSummary } from "@/lib/production-queue";
 
@@ -808,6 +809,8 @@ export default function MizRitaPage() {
           onCloseDay={() => setShowEndOfDay(true)}
           onReturn={() => setShowEndOfDay(false)}
         />
+
+        <TodaysAlerts />
 
         <section id="orders-management" className="mt-8 rounded-3xl bg-[#081c35] p-7 text-white shadow-xl">
           <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
