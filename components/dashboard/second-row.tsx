@@ -53,6 +53,9 @@ type CalendarEvent = {
   completed: boolean
   created_at: string
   updated_at: string
+  source: string | null
+  source_id: string | null
+  category: string | null
 }
 
 type DispatchTask = {
@@ -198,7 +201,8 @@ function cleanText(value: string) {
 }
 
 function packNotes(notes: string, meta: EventMeta) {
-  return `${metaPrefix}${JSON.stringify(meta)}${metaSeparator}${notes.trim()}`
+  const { priority, repeat, reminder } = meta
+  return `${metaPrefix}${JSON.stringify({ priority, repeat, reminder })}${metaSeparator}${notes.trim()}`
 }
 
 function unpackNotes(rawNotes: string | null): { notes: string; meta: EventMeta } {
@@ -228,7 +232,13 @@ function unpackNotes(rawNotes: string | null): { notes: string; meta: EventMeta 
 }
 
 function eventMeta(event: CalendarEvent) {
-  return unpackNotes(event.notes).meta
+  const unpacked = unpackNotes(event.notes).meta
+  return {
+    ...unpacked,
+    category: categories.includes(event.category as EventCategory)
+      ? event.category as EventCategory
+      : unpacked.category,
+  }
 }
 
 function eventDisplayNotes(event: CalendarEvent) {
@@ -434,6 +444,7 @@ function CalendarCard() {
       location: cleanText(form.location),
       notes: packNotes(form.notes, meta),
       event_date: form.event_date,
+      category: form.category,
       updated_at: new Date().toISOString(),
     }
 
@@ -464,6 +475,8 @@ function CalendarCard() {
           ...payload,
           user_id: user.id,
           completed: false,
+          source: "Manual",
+          source_id: null,
         })
         .select("*")
         .single()

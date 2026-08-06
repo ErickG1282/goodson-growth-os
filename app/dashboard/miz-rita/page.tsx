@@ -38,9 +38,11 @@ import {
   Users,
   X,
 } from "lucide-react";
+import Link from "next/link";
 
 import { SidebarContent } from "@/components/dashboard/sidebar";
 import { supabase } from "@/lib/supabase";
+import { queryProductionQueue, summarizeProductionQueue, type ProductionQueueOrder, type ProductionQueueSummary } from "@/lib/production-queue";
 
 type Customer = {
   id: string;
@@ -56,11 +58,14 @@ type Customer = {
 type Order = {
   id: string;
   customer_id: string;
+  meal_id?: string | null;
+  meal_count: number;
   order_number: string;
   order_date: string;
   fulfillment_date: string | null;
   order_status: string;
   payment_status: string;
+  payment_method?: string | null;
   delivery_method?: string | null;
   subtotal?: number | null;
   delivery_fee?: number | null;
@@ -71,6 +76,70 @@ type Order = {
   notes?: string | null;
   created_at?: string;
 };
+
+type DashboardProductionItem = {
+  id: number;
+  name: string;
+  category: "Protein" | "Vegetable" | "Side";
+  meals: number;
+  portionSize: number;
+  unit: "oz" | "g";
+  yieldLoss: number;
+  costPerPound: number;
+  costPerUnit: number;
+  status: "Waiting" | "Prep" | "Cooking" | "Packaging" | "Complete";
+  minutesPerBatch: number;
+  batchCapacity: number;
+};
+
+type DashboardInventoryItem = {
+  id: string;
+  name: string;
+  quantity: number;
+  unit: string;
+  parLevel: number;
+  vendor?: string;
+};
+
+type DashboardDelivery = {
+  id: string;
+  order_id: string;
+  delivery_type: "Pickup" | "Delivery";
+  driver_name: string | null;
+  status: "New Order" | "Preparing" | "Packaging" | "Ready" | "Out For Delivery" | "Delivered" | "Cancelled";
+  scheduled_at: string | null;
+  completed_at: string | null;
+};
+
+type OrderWorkflowStatus =
+  | "New Order"
+  | "Paid"
+  | "Kitchen"
+  | "Cooking"
+  | "Packaging"
+  | "Ready For Pickup"
+  | "Out For Delivery"
+  | "Delivered"
+  | "Completed";
+
+type OrderWorkflowEvent = {
+  id: string;
+  status: OrderWorkflowStatus;
+  label: string;
+  createdAt: string;
+};
+
+const ORDER_WORKFLOW: OrderWorkflowStatus[] = [
+  "New Order",
+  "Paid",
+  "Kitchen",
+  "Cooking",
+  "Packaging",
+  "Ready For Pickup",
+  "Out For Delivery",
+  "Delivered",
+  "Completed",
+];
 
 type CustomerTag = {
   id: string;
@@ -157,37 +226,25 @@ const EMPTY_ORDER_FORM: OrderFormState = {
   notes: "",
 };
 
-const MEAL_PLANS = [
-  {
-    id: "6-meal",
-    name: "6 Meal Plan",
-    meals: 6,
-    price: 95,
-  },
-  {
-    id: "8-meal",
-    name: "8 Meal Plan",
-    meals: 8,
-    price: 120,
-  },
-  {
-    id: "10-meal",
-    name: "10 Meal Plan",
-    meals: 10,
-    price: 150,
-  },
-  {
-    id: "family-plan",
-    name: "Family Plan",
-    meals: 20,
-    price: 280,
-  },
-] as const;
-
 export default function MizRitaPage() {
   const [businessId, setBusinessId] = useState("");
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [deliveries, setDeliveries] = useState<DashboardDelivery[]>([]);
+  const [menuPlans, setMenuPlans] = useState<Array<{ id: string; name: string; meals: number; price: number }>>([]);
+  const [dashboardProduction, setDashboardProduction] = useState<DashboardProductionItem[]>([]);
+  const [dashboardProductionSummary, setDashboardProductionSummary] = useState({
+    foodCost: 0,
+    productionMinutes: 0,
+    meals: 0,
+    completedItems: 0,
+    itemCount: 0,
+  });
+  const [dashboardInventory, setDashboardInventory] = useState<DashboardInventoryItem[]>([]);
+  const [showEndOfDay, setShowEndOfDay] = useState(false);
+  const [workflowEvents, setWorkflowEvents] = useState<Record<string, OrderWorkflowEvent[]>>({});
+  const [toastMessage, setToastMessage] = useState("");
+  const [productionQueueSummary, setProductionQueueSummary] = useState<ProductionQueueSummary>({ waitingOrders: 0, mealsWaiting: 0, overdueOrders: 0, cookingOrders: 0, pausedOrders: 0, packagingOrders: 0, readyOrders: 0, mealsRemaining: 0, progress: 0 });
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -248,6 +305,12 @@ export default function MizRitaPage() {
       const [
         { data: customerData, error: customerError },
         { data: orderData, error: orderError },
+        { data: productionData, error: productionError },
+        { data: inventoryData, error: inventoryError },
+        { data: workflowData, error: workflowError },
+        { data: menuData, error: menuError },
+        { data: deliveryData, error: deliveryError },
+        productionQueueResult,
       ] = await Promise.all([
         supabase
           .from("gbgs_customers")
@@ -260,18 +323,39 @@ export default function MizRitaPage() {
           .select("*")
           .eq("business_id", business.id)
           .order("created_at", { ascending: false }),
+        supabase.from("gbgs_production_plans").select("plan_data, summary").eq("business_id", business.id).maybeSingle(),
+        supabase.from("gbgs_inventory_items").select("id, name, quantity, unit, par_level").eq("business_id", business.id),
+        supabase.from("gbgs_order_workflow_events").select("id, order_id, status, label, created_at").eq("business_id", business.id).order("created_at"),
+        supabase.from("gbgs_menu_meals").select("id, name, selling_price").eq("business_id", business.id).eq("status", "Active").order("name"),
+        supabase.from("gbgs_deliveries").select("id, order_id, delivery_type, driver_name, status, scheduled_at, completed_at").eq("business_id", business.id),
+        queryProductionQueue(supabase, business.id),
       ]);
 
-      if (customerError || orderError) {
+      if (customerError || orderError || productionError || inventoryError || workflowError || menuError || deliveryError || productionQueueResult.error) {
         throw new Error(
           customerError?.message ||
             orderError?.message ||
+            productionError?.message ||
+            inventoryError?.message ||
+            workflowError?.message ||
+            menuError?.message ||
+            deliveryError?.message ||
+            productionQueueResult.error?.message ||
             "Unable to load Miz Rita data.",
         );
       }
 
       setCustomers((customerData ?? []) as Customer[]);
       setOrders((orderData ?? []) as Order[]);
+      setDeliveries((deliveryData ?? []) as DashboardDelivery[]);
+      setDashboardProduction(Array.isArray(productionData?.plan_data) ? productionData.plan_data as DashboardProductionItem[] : []);
+      if (productionData?.summary && typeof productionData.summary === "object") setDashboardProductionSummary((current) => ({ ...current, ...productionData.summary }));
+      setDashboardInventory((inventoryData ?? []).map((item) => ({ id: item.id, name: item.name, quantity: Number(item.quantity), unit: item.unit, parLevel: Number(item.par_level) })));
+      const grouped: Record<string, OrderWorkflowEvent[]> = {};
+      (workflowData ?? []).forEach((event) => { grouped[event.order_id] = [...(grouped[event.order_id] ?? []), { id: event.id, status: normalizeWorkflowStatus(event.status), label: event.label, createdAt: event.created_at }]; });
+      setWorkflowEvents(grouped);
+      setMenuPlans((menuData ?? []).map((meal) => ({ id: meal.id, name: meal.name, meals: 1, price: Number(meal.selling_price) })));
+      setProductionQueueSummary(summarizeProductionQueue((productionQueueResult.data ?? []) as ProductionQueueOrder[]));
     } catch (caughtError) {
       setError(getErrorMessage(caughtError));
     } finally {
@@ -283,6 +367,36 @@ export default function MizRitaPage() {
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (!businessId) return;
+    const channel = supabase
+      .channel(`miz-rita-orders-${businessId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "gbgs_orders",
+          filter: `business_id=eq.${businessId}`,
+        },
+        () => void loadData(),
+      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "gbgs_production_plans", filter: `business_id=eq.${businessId}` }, () => void loadData())
+      .on("postgres_changes", { event: "*", schema: "public", table: "gbgs_inventory_items", filter: `business_id=eq.${businessId}` }, () => void loadData())
+      .on("postgres_changes", { event: "*", schema: "public", table: "gbgs_order_workflow_events", filter: `business_id=eq.${businessId}` }, () => void loadData())
+      .on("postgres_changes", { event: "*", schema: "public", table: "gbgs_deliveries", filter: `business_id=eq.${businessId}` }, () => void loadData())
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [businessId, loadData]);
+
+  useEffect(() => {
+    if (!toastMessage) return;
+    const timeout = window.setTimeout(() => setToastMessage(""), 2600);
+    return () => window.clearTimeout(timeout);
+  }, [toastMessage]);
 
   const filteredCustomers = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -328,7 +442,7 @@ export default function MizRitaPage() {
         (order) => !["Completed", "Cancelled"].includes(order.order_status),
       )
       .map((order) => {
-        const details = parseOrderDetails(order.notes);
+        const details = parseOrderDetails(order.notes, order.meal_count);
         const meals = Number(details.numberOfMeals);
 
         return {
@@ -406,7 +520,7 @@ export default function MizRitaPage() {
       return;
     }
 
-    const selectedPlan = MEAL_PLANS.find((plan) => plan.id === planId);
+    const selectedPlan = menuPlans.find((plan) => plan.id === planId);
 
     if (!selectedPlan) {
       return;
@@ -418,6 +532,70 @@ export default function MizRitaPage() {
       number_of_meals: selectedPlan.meals.toString(),
       subtotal: selectedPlan.price.toFixed(2),
     }));
+  }
+
+  async function addWorkflowEvent(
+    orderId: string,
+    status: OrderWorkflowStatus,
+    label: string,
+  ) {
+    setWorkflowEvents((current) => {
+      const next = {
+        ...current,
+        [orderId]: [
+          ...(current[orderId] ?? []),
+          {
+            id: `${orderId}-${Date.now()}`,
+            status,
+            label,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      };
+      return next;
+    });
+    if (businessId) {
+      const { error: eventError } = await supabase.from("gbgs_order_workflow_events").insert({ business_id: businessId, order_id: orderId, status, label });
+      if (eventError) setError(eventError.message);
+    }
+  }
+
+  async function updateOrderWorkflow(
+    orderId: string,
+    status: OrderWorkflowStatus,
+    notification?: string,
+  ) {
+    const currentOrder = orders.find((order) => order.id === orderId);
+    if (!currentOrder || currentOrder.order_status === status) return;
+
+    const previousOrders = orders;
+    const optimisticOrder = { ...currentOrder, order_status: status };
+    setOrders((current) =>
+      current.map((order) => order.id === orderId ? optimisticOrder : order),
+    );
+    if (selectedOrder?.id === orderId) setSelectedOrder(optimisticOrder);
+
+    const label = notification ?? getWorkflowEventLabel(status);
+    const { error: updateError } = await supabase.rpc("gbgs_transition_order", {
+      p_business_id: businessId,
+      p_order_id: orderId,
+      p_order_status: status,
+      p_label: label,
+    });
+
+    if (updateError) {
+      setOrders(previousOrders);
+      if (selectedOrder?.id === orderId) setSelectedOrder(currentOrder);
+      setError(updateError.message);
+      return;
+    }
+
+    const updatedOrder = optimisticOrder;
+    setOrders((current) =>
+      current.map((order) => order.id === orderId ? updatedOrder : order),
+    );
+    if (selectedOrder?.id === orderId) setSelectedOrder(updatedOrder);
+    setToastMessage(label);
   }
 
   function openCustomerModal() {
@@ -553,34 +731,46 @@ export default function MizRitaPage() {
         .replace(/\D/g, "")
         .slice(0, 14)}`;
 
-      const { data, error: insertError } = await supabase
-        .from("gbgs_orders")
-        .insert({
-          business_id: businessId,
-          created_by: user.id,
-          customer_id: orderForm.customer_id,
+      const selectedMeal = menuPlans.find((meal) => meal.name === orderForm.meal_plan);
+      if (!selectedMeal) throw new Error("Select a valid Menu meal.");
+      const { data: createdOrderId, error: insertError } = await supabase.rpc("gbgs_create_order", {
+          p_business_id: businessId,
+          p_created_by: user.id,
+          p_customer_id: orderForm.customer_id,
+          p_meal_id: selectedMeal.id,
+          p_values: {
           order_number: orderNumber,
           order_date: now.toISOString().slice(0, 10),
           fulfillment_date: orderForm.fulfillment_date || null,
-          order_status: orderForm.order_status,
+          meal_count: Math.max(1, Math.floor(Number(orderForm.number_of_meals))),
+          order_status:
+            orderForm.payment_status === "Paid"
+              ? "Paid"
+              : orderForm.order_status === "Pending"
+                ? "New Order"
+                : orderForm.order_status,
           payment_status: orderForm.payment_status,
           delivery_method: orderForm.delivery_method,
           subtotal,
           delivery_fee: deliveryFee,
           discount,
-          amount_paid: amountPaid,
           total,
-          balance_due: balanceDue,
           notes: buildOrderNotes(orderForm),
-        })
-        .select("*")
-        .single();
+        },
+        p_payment_amount: amountPaid,
+      });
 
       if (insertError) {
         throw insertError;
       }
 
-      setOrders((current) => [data as Order, ...current]);
+      const { data: createdOrder, error: reloadError } = await supabase.from("gbgs_orders").select("*").eq("id", createdOrderId).single();
+      if (reloadError || !createdOrder) throw reloadError ?? new Error("Order could not be reloaded.");
+      setOrders((current) => [createdOrder as Order, ...current]);
+      const createdStatus = normalizeWorkflowStatus(createdOrder.order_status);
+      if (createdOrder.payment_status.toLowerCase() === "paid") {
+        setToastMessage("Payment Received");
+      }
       setOrderForm(EMPTY_ORDER_FORM);
       setOrderStep(1);
       setShowOrderModal(false);
@@ -591,6 +781,10 @@ export default function MizRitaPage() {
     }
   }
 
+  async function completeDashboardDelivery(orderId: string) {
+    await updateOrderWorkflow(orderId, "Completed", "Order Delivered");
+  }
+
   return (
     <div className="min-h-screen bg-[#f1f4f8]">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 lg:block">
@@ -598,7 +792,24 @@ export default function MizRitaPage() {
       </aside>
 
       <main className="px-5 py-6 lg:ml-64 lg:px-8">
-        <section className="rounded-3xl bg-[#081c35] p-7 text-white shadow-xl">
+        <DailyCommandCenter
+          orders={orders}
+          deliveries={deliveries}
+          productionOrders={productionOrders}
+          menuPlans={menuPlans}
+          productionQueueSummary={productionQueueSummary}
+          customerNames={customerNames}
+          production={dashboardProduction}
+          productionSummary={dashboardProductionSummary}
+          inventory={dashboardInventory}
+          showEndOfDay={showEndOfDay}
+          onReady={(orderId) => void updateOrderWorkflow(orderId, "Ready For Pickup")}
+          onDeliveryComplete={(orderId) => void completeDashboardDelivery(orderId)}
+          onCloseDay={() => setShowEndOfDay(true)}
+          onReturn={() => setShowEndOfDay(false)}
+        />
+
+        <section id="orders-management" className="mt-8 rounded-3xl bg-[#081c35] p-7 text-white shadow-xl">
           <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
             <div>
               <p className="text-sm font-bold uppercase tracking-[0.2em] text-[#d6a817]">
@@ -684,7 +895,7 @@ export default function MizRitaPage() {
           </div>
         ) : null}
 
-        <section className="mt-6 rounded-3xl bg-white p-6 shadow-lg">
+        <section id="reports" className="mt-6 rounded-3xl bg-white p-6 shadow-lg">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
               <h2 className="text-xl font-bold text-[#081c35]">
@@ -758,7 +969,7 @@ export default function MizRitaPage() {
                       </td>
 
                       <td className="max-w-sm px-3 py-4 text-slate-600">
-                        {customer.dietary_notes || "None"}
+                        <DietaryNotes notes={customer.dietary_notes} />
                       </td>
 
                       <td className="px-3 py-4">
@@ -882,7 +1093,7 @@ export default function MizRitaPage() {
           </div>
 
           <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            {MEAL_PLANS.map((plan) => (
+            {menuPlans.map((plan) => (
               <div
                 key={plan.id}
                 className="rounded-2xl border border-slate-200 p-5"
@@ -1152,7 +1363,7 @@ export default function MizRitaPage() {
                   <select
                     required
                     value={
-                      MEAL_PLANS.find(
+                      menuPlans.find(
                         (plan) => plan.name === orderForm.meal_plan,
                       )?.id || ""
                     }
@@ -1160,7 +1371,7 @@ export default function MizRitaPage() {
                     className="form-input"
                   >
                     <option value="">Select meal plan</option>
-                    {MEAL_PLANS.map((plan) => (
+                    {menuPlans.map((plan) => (
                       <option key={plan.id} value={plan.id}>
                         {plan.name} — {plan.meals} meals —{" "}
                         {formatMoney(plan.price)}
@@ -1430,17 +1641,24 @@ export default function MizRitaPage() {
           orders={selectedCustomerOrders}
           onClose={() => setSelectedCustomer(null)}
           onOrderUpdated={(updatedOrder) => {
+            const previousOrder = orders.find((order) => order.id === updatedOrder.id);
             setOrders((current) =>
               current.map((order) =>
                 order.id === updatedOrder.id ? updatedOrder : order,
               ),
             );
+            if (
+              previousOrder?.payment_status.toLowerCase() !== "paid" &&
+              updatedOrder.payment_status.toLowerCase() === "paid"
+            ) {
+              void updateOrderWorkflow(updatedOrder.id, "Paid", "Payment Received");
+            }
           }}
           onCreateOrder={(repeatOrder) => {
             setSelectedCustomer(null);
 
             if (repeatOrder) {
-              const details = parseOrderDetails(repeatOrder.notes);
+              const details = parseOrderDetails(repeatOrder.notes, repeatOrder.meal_count);
               setOrderForm({
                 ...EMPTY_ORDER_FORM,
                 customer_id: selectedCustomer.id,
@@ -1475,23 +1693,30 @@ export default function MizRitaPage() {
       {selectedOrder ? (
         <OrderDetailsModal
           order={selectedOrder}
+          customer={customers.find((customer) => customer.id === selectedOrder.customer_id) ?? null}
           customerName={
             customerNames.get(selectedOrder.customer_id) || "Unknown customer"
           }
           updating={updatingOrder}
+          workflowEvents={workflowEvents[selectedOrder.id] ?? []}
           onClose={() => setSelectedOrder(null)}
+          onAdvance={async () => {
+            const currentStatus = normalizeWorkflowStatus(selectedOrder.order_status);
+            const nextStatus = getNextWorkflowStatus(currentStatus, selectedOrder.delivery_method);
+            if (nextStatus) {
+              await updateOrderWorkflow(selectedOrder.id, nextStatus);
+            }
+          }}
           onMarkCompleted={async () => {
             setUpdatingOrder(true);
             setError("");
 
-            const { data, error: updateError } = await supabase
-              .from("gbgs_orders")
-              .update({
-                order_status: "Completed",
-              })
-              .eq("id", selectedOrder.id)
-              .select("*")
-              .single();
+            const { error: updateError } = await supabase.rpc("gbgs_transition_order", {
+              p_business_id: businessId,
+              p_order_id: selectedOrder.id,
+              p_order_status: "Completed",
+              p_label: "Order Completed",
+            });
 
             if (updateError) {
               setError(updateError.message);
@@ -1499,7 +1724,7 @@ export default function MizRitaPage() {
               return;
             }
 
-            const updatedOrder = data as Order;
+            const updatedOrder = { ...selectedOrder, order_status: "Completed" };
 
             setOrders((current) =>
               current.map((order) =>
@@ -1507,6 +1732,7 @@ export default function MizRitaPage() {
               ),
             );
             setSelectedOrder(updatedOrder);
+            setToastMessage("Order Completed");
             setUpdatingOrder(false);
           }}
           onDuplicate={async () => {
@@ -1530,28 +1756,32 @@ export default function MizRitaPage() {
               .replace(/\D/g, "")
               .slice(0, 14)}`;
 
-            const { data, error: duplicateError } = await supabase
-              .from("gbgs_orders")
-              .insert({
-                business_id: businessId,
-                created_by: user.id,
-                customer_id: selectedOrder.customer_id,
+            if (!selectedOrder.meal_id) {
+              setError("This legacy order must be linked to a Menu meal before it can be duplicated.");
+              setUpdatingOrder(false);
+              return;
+            }
+            const { data: duplicatedId, error: duplicateError } = await supabase.rpc("gbgs_create_order", {
+                p_business_id: businessId,
+                p_created_by: user.id,
+                p_customer_id: selectedOrder.customer_id,
+                p_meal_id: selectedOrder.meal_id,
+                p_values: {
                 order_number: orderNumber,
                 order_date: now.toISOString().slice(0, 10),
                 fulfillment_date: selectedOrder.fulfillment_date,
+                meal_count: selectedOrder.meal_count,
                 order_status: "Pending",
                 payment_status: "Unpaid",
                 delivery_method: selectedOrder.delivery_method || "Pickup",
                 subtotal: Number(selectedOrder.subtotal || 0),
                 delivery_fee: Number(selectedOrder.delivery_fee || 0),
                 discount: Number(selectedOrder.discount || 0),
-                amount_paid: 0,
                 total: Number(selectedOrder.total || 0),
-                balance_due: Number(selectedOrder.total || 0),
                 notes: selectedOrder.notes || null,
-              })
-              .select("*")
-              .single();
+              },
+              p_payment_amount: 0,
+            });
 
             if (duplicateError) {
               setError(duplicateError.message);
@@ -1559,7 +1789,12 @@ export default function MizRitaPage() {
               return;
             }
 
-            const duplicatedOrder = data as Order;
+            const { data: duplicatedOrder, error: reloadError } = await supabase.from("gbgs_orders").select("*").eq("id", duplicatedId).single();
+            if (reloadError || !duplicatedOrder) {
+              setError(reloadError?.message ?? "Duplicated order could not be loaded.");
+              setUpdatingOrder(false);
+              return;
+            }
             setOrders((current) => [duplicatedOrder, ...current]);
             setSelectedOrder(duplicatedOrder);
             setUpdatingOrder(false);
@@ -1596,6 +1831,13 @@ export default function MizRitaPage() {
         />
       ) : null}
 
+      {toastMessage ? (
+        <div className="fixed bottom-6 right-6 z-[90] flex items-center gap-3 rounded-2xl bg-[#081c35] px-5 py-4 font-bold text-white shadow-2xl">
+          <CheckCircle2 className="h-5 w-5 text-[#d6a817]" />
+          {toastMessage}
+        </div>
+      ) : null}
+
       <style jsx global>{`
         .form-input {
           width: 100%;
@@ -1617,24 +1859,437 @@ export default function MizRitaPage() {
   );
 }
 
+function DailyCommandCenter({
+  orders,
+  deliveries,
+  productionOrders,
+  menuPlans,
+  productionQueueSummary,
+  customerNames,
+  production,
+  productionSummary,
+  inventory,
+  showEndOfDay,
+  onReady,
+  onDeliveryComplete,
+  onCloseDay,
+  onReturn,
+}: {
+  orders: Order[];
+  deliveries: DashboardDelivery[];
+  productionOrders: Array<Order & {
+    customer_name: string;
+    meal_plan: string;
+    meals: number;
+    production_status: string;
+  }>;
+  menuPlans: Array<{ id: string; name: string }>;
+  productionQueueSummary: ProductionQueueSummary;
+  customerNames: Map<string, string>;
+  production: DashboardProductionItem[];
+  productionSummary: {
+    foodCost: number;
+    productionMinutes: number;
+    meals: number;
+    completedItems: number;
+    itemCount: number;
+  };
+  inventory: DashboardInventoryItem[];
+  showEndOfDay: boolean;
+  onReady: (orderId: string) => void;
+  onDeliveryComplete: (orderId: string) => void;
+  onCloseDay: () => void;
+  onReturn: () => void;
+}) {
+  const dateKey = new Date().toISOString().slice(0, 10);
+  const todaysOrders = orders.filter((order) =>
+    (order.fulfillment_date ?? order.order_date)?.startsWith(dateKey),
+  );
+  const activeToday = todaysOrders.length ? todaysOrders : productionOrders;
+  const mealNames = new Map(menuPlans.map((meal) => [meal.id, meal.name]));
+  const orderDetails = activeToday.map((order) => {
+    const details = parseOrderDetails(order.notes, order.meal_count);
+    return {
+      ...order,
+      details: {
+        ...details,
+        mealPlan: (order.meal_id ? mealNames.get(order.meal_id) : undefined) ?? details.mealPlan,
+      },
+      customerName:
+        "customer_name" in order
+          ? String(order.customer_name)
+          : customerNames.get(order.customer_id) ?? "Unknown customer",
+    };
+  });
+  const mealsScheduled = productionSummary.meals || (production.length
+    ? Math.max(0, ...production.map((item) => item.meals))
+    : orderDetails.reduce(
+        (sum, order) => sum + Number(order.details.numberOfMeals || 0),
+        0,
+      ));
+  const completedProduction = productionSummary.completedItems || production.filter((item) => item.status === "Complete").length;
+  const productionItemCount = productionSummary.itemCount || production.length;
+  const productionProgress = productionItemCount
+    ? Math.round((completedProduction / productionItemCount) * 100)
+    : 0;
+  const mealsCompleted = Math.round(mealsScheduled * productionProgress / 100);
+  const mealsRemaining = Math.max(mealsScheduled - mealsCompleted, 0);
+  const inventoryAlerts = inventory.filter((item) => item.quantity < item.parLevel);
+  const completedOrders = activeToday.filter((order) => order.order_status === "Completed");
+  const deliveriesToday = deliveries.filter((delivery) => delivery.delivery_type === "Delivery" && delivery.scheduled_at?.startsWith(dateKey));
+  const readyForPickup = deliveries.filter((delivery) => delivery.delivery_type === "Pickup" && delivery.status === "Ready").length;
+  const outForDelivery = deliveries.filter((delivery) => delivery.status === "Out For Delivery").length;
+  const deliveredToday = deliveries.filter((delivery) => delivery.status === "Delivered" && delivery.completed_at?.startsWith(dateKey)).length;
+  const lateDeliveries = deliveries.filter((delivery) => delivery.delivery_type === "Delivery" && delivery.scheduled_at && new Date(delivery.scheduled_at) < new Date() && !["Delivered", "Cancelled"].includes(delivery.status)).length;
+  const deliveriesRemaining = deliveriesToday.filter((delivery) => !["Delivered", "Cancelled"].includes(delivery.status)).length;
+  const deliveryQueue = deliveriesToday.flatMap((delivery) => {
+    const order = orderDetails.find((item) => item.id === delivery.order_id);
+    return order ? [{ delivery, order }] : [];
+  });
+  const revenueToday = activeToday.reduce(
+    (sum, order) => sum + Number(order.total || 0),
+    0,
+  );
+  const foodCost = productionSummary.foodCost;
+  const productionMinutes = productionSummary.productionMinutes;
+  const estimatedFinish = new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(Date.now() + Math.max(0, productionMinutes * (1 - productionProgress / 100)) * 60_000));
+  const pickupTimes = orderDetails
+    .map((order) => order.details.pickupDeliveryTime)
+    .filter((value) => value && value !== "Not scheduled")
+    .sort();
+  const firstPickup = pickupTimes[0] || "Not scheduled";
+  const stationCounts = ["Waiting", "Prep", "Cooking", "Packaging", "Complete"].map(
+    (status) => ({
+      status,
+      meals: production
+        .filter((item) => item.status === status)
+        .reduce((sum, item) => sum + item.meals, 0),
+    }),
+  );
+  const nextAction =
+    inventoryAlerts.some((item) => item.quantity <= 0)
+      ? { label: "Receive Inventory", href: "/dashboard/miz-rita/inventory" }
+      : productionProgress === 0
+        ? { label: "Start Today's Production", href: "/dashboard/miz-rita/kitchen" }
+        : production.some((item) => item.status === "Packaging")
+          ? { label: "Begin Packaging", href: "/dashboard/miz-rita/kitchen" }
+          : productionProgress < 100
+            ? { label: "Continue Kitchen Production", href: "/dashboard/miz-rita/kitchen" }
+            : deliveriesRemaining
+              ? { label: "Print Delivery List", href: "#delivery-queue" }
+              : { label: "Close Today's Operations", href: "#close-day" };
+  const workflow = [
+    { label: "Orders Received", count: activeToday.length, progress: activeToday.length ? 100 : 0 },
+    { label: "Kitchen Production", count: activeToday.length, progress: productionProgress },
+    { label: "Packaging", count: production.filter((item) => ["Packaging", "Complete"].includes(item.status)).length, progress: production.length ? Math.round(production.filter((item) => ["Packaging", "Complete"].includes(item.status)).length / production.length * 100) : 0 },
+    { label: "Ready For Pickup", count: activeToday.filter((order) => ["Ready For Pickup", "Out For Delivery", "Delivered", "Completed"].includes(normalizeWorkflowStatus(order.order_status))).length, progress: activeToday.length ? Math.round(activeToday.filter((order) => ["Ready For Pickup", "Out For Delivery", "Delivered", "Completed"].includes(normalizeWorkflowStatus(order.order_status))).length / activeToday.length * 100) : 0 },
+    { label: "Deliveries", count: deliveriesToday.length, progress: deliveriesToday.length ? Math.round((deliveriesToday.length - deliveriesRemaining) / deliveriesToday.length * 100) : 0 },
+    { label: "Completed", count: completedOrders.length, progress: activeToday.length ? Math.round(completedOrders.length / activeToday.length * 100) : 0 },
+  ];
+  const currentWorkflow = workflow.findIndex((stage) => stage.progress < 100);
+
+  return (
+    <>
+      <section className="rounded-3xl bg-[#081c35] p-6 text-white shadow-xl md:p-8">
+        <p className="text-center text-sm font-bold uppercase tracking-[0.25em] text-[#d6a817]">
+          Daily Operations
+        </p>
+        <h1 className="mt-3 text-center text-4xl font-bold">Good Morning, Rita</h1>
+
+        <div className="mt-2">
+          <p className="text-center text-xl text-slate-300">Today&apos;s Overview</p>
+  <div
+  style={{
+    width: "720px",
+    maxWidth: "90%",
+    margin: "20px auto 0",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    textAlign: "left",
+  }}
+>
+  <div style={{ width: "320px" }} className="space-y-2">
+    <p>• {activeToday.length} Orders</p>
+    <p>• First Pickup: {firstPickup}</p>
+    <p>• Estimated Kitchen Finish: {estimatedFinish}</p>
+  </div>
+
+  <div style={{ width: "220px" }} className="space-y-2">
+    <p>• {mealsScheduled} Meals Scheduled</p>
+    <p>• Inventory Alerts: {inventoryAlerts.length}</p>
+  </div>
+</div>
+
+     </div>
+
+        <div className="mx-auto mt-5 w-[90%] rounded-2xl bg-white p-4 text-[#081c35]">
+          <p className="text-center text-xs font-bold uppercase tracking-[0.2em] text-[#9a7710]">
+            Next Recommended Action
+          </p>
+          {nextAction.href === "#close-day" ? (
+            <button
+              onClick={onCloseDay}
+              className="mt-3 flex w-full items-center justify-center gap-3 rounded-xl bg-[#d6a817] px-5 py-3 text-center text-lg font-bold"
+            >
+              <span>▶</span>
+              {nextAction.label}
+            </button>
+          ) : (
+            <Link
+              href={nextAction.href}
+              className="mt-3 flex w-full items-center justify-center gap-3 rounded-xl bg-[#d6a817] px-5 py-3 text-center text-lg font-bold"
+            >
+              <span>▶</span>
+              {nextAction.label}
+            </Link>
+          )}
+        </div>
+      </section>
+
+      <section className="mt-6">
+        <h2 className="text-2xl font-bold text-[#081c35]">Today&apos;s Business Snapshot</h2>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          {[
+            ["Orders Today", activeToday.length],
+            ["Meals Scheduled", mealsScheduled],
+            ["Meals Completed", mealsCompleted],
+            ["Meals Remaining", mealsRemaining],
+            ["Revenue Today", formatMoney(revenueToday)],
+            ["Food Cost", formatMoney(foodCost)],
+            ["Deliveries Today", deliveriesToday.length],
+            ["Ready for Pickup", readyForPickup],
+            ["Out for Delivery", outForDelivery],
+            ["Delivered Today", deliveredToday],
+            ["Late Deliveries", lateDeliveries],
+            ["Inventory Alerts", inventoryAlerts.length],
+            ["Kitchen Progress", `${productionProgress}%`],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-sm font-semibold text-slate-500">{label}</p>
+              <p className="mt-2 text-3xl font-bold text-[#081c35]">{value}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <Link
+        href="/dashboard/miz-rita/kitchen"
+        className={`mt-6 block rounded-3xl border-2 p-6 shadow-lg transition hover:-translate-y-0.5 hover:shadow-xl ${
+          productionQueueSummary.overdueOrders > 0
+            ? "border-red-300 bg-red-50"
+            : productionQueueSummary.waitingOrders > 0
+              ? "border-amber-300 bg-amber-50"
+              : "border-emerald-300 bg-emerald-50"
+        }`}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#d6a817]">Kitchen Backlog</p>
+            <h2 className="mt-1 text-2xl font-bold text-[#081c35]">Production Queue</h2>
+          </div>
+          <span className="font-bold text-[#081c35]">View Kitchen →</span>
+        </div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          {[
+            ["Waiting Orders", productionQueueSummary.waitingOrders],
+            ["Total Meals Waiting", productionQueueSummary.mealsWaiting],
+            ["Overdue Orders", productionQueueSummary.overdueOrders],
+            ["Orders Currently Cooking", productionQueueSummary.cookingOrders],
+            ["Orders Paused", productionQueueSummary.pausedOrders],
+            ["Orders Packaging", productionQueueSummary.packagingOrders],
+            ["Orders Ready", productionQueueSummary.readyOrders],
+            ["Kitchen Progress", `${productionQueueSummary.progress}%`],
+            ["Meals Remaining", productionQueueSummary.mealsRemaining],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-2xl bg-white/80 p-4">
+              <p className="text-sm font-semibold text-slate-500">{label}</p>
+              <p className="mt-1 text-3xl font-bold text-[#081c35]">{value}</p>
+            </div>
+          ))}
+        </div>
+        <p className={`mt-5 font-bold ${productionQueueSummary.overdueOrders > 0 ? "text-red-800" : productionQueueSummary.waitingOrders > 0 ? "text-amber-800" : "text-emerald-800"}`}>
+          {productionQueueSummary.overdueOrders > 0
+            ? `⚠️ ${productionQueueSummary.overdueOrders} overdue production order${productionQueueSummary.overdueOrders === 1 ? "" : "s"} require attention.`
+            : productionQueueSummary.waitingOrders > 0
+              ? `⚠️ ${productionQueueSummary.waitingOrders} production order${productionQueueSummary.waitingOrders === 1 ? "" : "s"} waiting.`
+              : "🟢 Production Queue Clear"}
+        </p>
+        {(productionQueueSummary.pausedOrders > 0 || productionQueueSummary.overdueOrders > 0) && <p className="mt-2 font-semibold text-red-800">Production Alerts: {productionQueueSummary.pausedOrders} paused, {productionQueueSummary.overdueOrders} overdue.</p>}
+      </Link>
+
+      <section className="mt-6 rounded-3xl bg-white p-6 shadow-lg">
+        <h2 className="text-2xl font-bold text-[#081c35]">Daily Workflow</h2>
+        <div className="mt-5 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+          {workflow.map((stage, index) => {
+            const complete = stage.progress === 100;
+            const current = index === currentWorkflow;
+            return (
+              <div key={stage.label} className={`rounded-2xl border-2 p-4 ${complete ? "border-emerald-300 bg-emerald-50" : current ? "border-blue-400 bg-blue-50" : "border-slate-200 bg-slate-50"}`}>
+                <p className={`text-sm font-bold ${complete ? "text-emerald-800" : current ? "text-blue-800" : "text-slate-600"}`}>{stage.label}</p>
+                <p className="mt-2 text-2xl font-bold">{stage.count}</p>
+                <div className="mt-3 h-2 overflow-hidden rounded-full bg-white">
+                  <div className={`h-full ${complete ? "bg-emerald-500" : current ? "bg-blue-600" : "bg-slate-300"}`} style={{ width: `${stage.progress}%` }} />
+                </div>
+                <p className="mt-2 text-xs font-semibold text-slate-500">{complete ? "Complete" : current ? "In progress" : "Upcoming"} · {stage.progress}%</p>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <div className="mt-6 grid gap-6 xl:grid-cols-3">
+        <section className="rounded-3xl bg-white p-6 shadow-lg xl:col-span-2">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div><p className="text-xs font-bold uppercase tracking-[0.2em] text-[#d6a817]">Kitchen Production</p><h2 className="mt-1 text-2xl font-bold text-[#081c35]">Overall Production Progress</h2></div>
+            <p className="text-4xl font-bold text-[#081c35]">{productionProgress}%</p>
+          </div>
+          <div className="mt-5 h-6 overflow-hidden rounded-full bg-slate-200"><div className="h-full rounded-full bg-emerald-600 transition-all" style={{ width: `${productionProgress}%` }} /></div>
+          <div className="mt-5 grid grid-cols-3 gap-3 text-center">
+            <div><p className="text-sm text-slate-500">Meals Completed</p><p className="text-2xl font-bold">{mealsCompleted}</p></div>
+            <div><p className="text-sm text-slate-500">Meals Remaining</p><p className="text-2xl font-bold">{mealsRemaining}</p></div>
+            <div><p className="text-sm text-slate-500">Estimated Finish</p><p className="text-2xl font-bold">{estimatedFinish}</p></div>
+          </div>
+          <div className="mt-6 flex flex-wrap gap-2">
+            {stationCounts.map(({ status, meals }) => (
+              <span key={status} className={`rounded-full px-4 py-2 text-sm font-bold ${status === "Complete" ? "bg-emerald-100 text-emerald-800" : status === "Cooking" ? "bg-orange-100 text-orange-800" : status === "Packaging" ? "bg-purple-100 text-purple-800" : status === "Prep" ? "bg-blue-100 text-blue-800" : "bg-slate-100 text-slate-700"}`}>{status}: {meals}</span>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-3xl bg-white p-6 shadow-lg">
+          <h2 className="text-2xl font-bold text-[#081c35]">Inventory Alerts</h2>
+          <div className="mt-4 space-y-3">
+            {inventoryAlerts.length ? inventoryAlerts.slice(0, 4).map((item) => (
+              <div key={item.id} className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                <p className="font-bold">{item.name}</p>
+                <div className="mt-2 flex justify-between text-sm"><span>Current: {item.quantity.toFixed(item.unit === "lb" ? 2 : 0)} {item.unit}</span><span>Minimum: {item.parLevel} {item.unit}</span></div>
+                <div className="mt-3 flex items-center justify-between"><p className="font-bold text-amber-800">Need {Math.max(item.parLevel - item.quantity, 0).toFixed(item.unit === "lb" ? 2 : 0)} {item.unit}</p><Link href="/dashboard/miz-rita/inventory" className="rounded-lg bg-[#081c35] px-3 py-2 text-sm font-bold text-white">Order Now</Link></div>
+              </div>
+            )) : <p className="rounded-2xl bg-emerald-50 p-5 font-bold text-emerald-800">✓ All inventory levels are healthy.</p>}
+          </div>
+        </section>
+      </div>
+
+      <section className="mt-6 rounded-3xl bg-white p-6 shadow-lg">
+        <h2 className="text-2xl font-bold text-[#081c35]">Orders Waiting</h2>
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full min-w-[900px] text-left text-sm">
+            <thead className="border-b text-xs uppercase text-slate-500"><tr>{["Customer", "Meal Plan", "Meal Count", "Pickup or Delivery", "Pickup Time", "Status", "Ready"].map((heading) => <th key={heading} className="px-3 py-3">{heading}</th>)}</tr></thead>
+            <tbody>{orderDetails.filter((order) => !["Completed", "Cancelled"].includes(order.order_status)).slice(0, 8).map((order) => (
+              <tr key={order.id} className="border-b border-slate-100">
+                <td className="px-3 py-4 font-bold">{order.customerName}</td><td className="px-3 py-4">{order.details.mealPlan}</td><td className="px-3 py-4">{order.details.numberOfMeals}</td><td className="px-3 py-4">{order.delivery_method || "Pickup"}</td><td className="px-3 py-4">{order.details.pickupDeliveryTime}</td><td className="px-3 py-4"><StatusBadge value={order.order_status} /></td>
+                <td className="px-3 py-4"><button disabled={normalizeWorkflowStatus(order.order_status) === "Ready For Pickup"} onClick={() => onReady(order.id)} className="rounded-xl bg-emerald-600 px-4 py-2 font-bold text-white disabled:opacity-40">Ready</button></td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      </section>
+
+      <div className="mt-6 grid gap-6 xl:grid-cols-2">
+        <section id="delivery-queue" className="rounded-3xl bg-white p-6 shadow-lg">
+          <h2 className="text-2xl font-bold text-[#081c35]">Delivery Queue</h2>
+          <div className="mt-4 space-y-3">{deliveryQueue.length ? deliveryQueue.map(({ delivery, order }) => (
+            <div key={delivery.id} className="grid gap-2 rounded-2xl border p-4 sm:grid-cols-6 sm:items-center">
+              <p className="font-bold">{order.customerName}</p><p className="text-sm">Driver: {delivery.driver_name || "Not Assigned"}</p><p className="text-sm">Scheduled: {delivery.scheduled_at ? formatDateTime(delivery.scheduled_at) : "Not scheduled"}</p><p className="text-sm">Delivery: {delivery.status}</p><StatusBadge value={delivery.status} />
+              <button disabled={delivery.status === "Delivered"} onClick={() => onDeliveryComplete(order.id)} className="rounded-xl bg-emerald-600 px-3 py-2 text-sm font-bold text-white disabled:opacity-40">Delivered</button>
+            </div>
+          )) : <p className="rounded-2xl bg-slate-50 p-5 text-slate-500">No deliveries scheduled today.</p>}</div>
+        </section>
+        <section className="rounded-3xl bg-white p-6 shadow-lg">
+          <h2 className="text-2xl font-bold text-[#081c35]">Production Alerts</h2>
+          <div className="mt-4 space-y-3">
+            {production.filter((item) => item.status === "Complete").slice(0, 3).map((item) => <p key={item.id} className="rounded-xl bg-emerald-50 p-4 font-semibold text-emerald-800">✓ {item.name} finished cooking</p>)}
+            {production.some((item) => item.status === "Packaging") && <p className="rounded-xl bg-purple-50 p-4 font-semibold text-purple-800">Packaging is in progress.</p>}
+            {inventoryAlerts.length > 0 && <p className="rounded-xl bg-amber-50 p-4 font-semibold text-amber-800">{inventoryAlerts.length} inventory item{inventoryAlerts.length === 1 ? "" : "s"} need attention.</p>}
+            {!production.length && <p className="rounded-xl bg-slate-50 p-4 text-slate-500">Save a Kitchen production plan to see live alerts.</p>}
+          </div>
+        </section>
+      </div>
+
+      <section className="mt-6 rounded-3xl bg-white p-6 shadow-lg">
+        <h2 className="text-2xl font-bold text-[#081c35]">Today&apos;s Timeline</h2>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {[
+            ["7:30 AM", "Kitchen Opened"],
+            [productionProgress > 0 ? "8:00 AM" : "Next", productionProgress > 0 ? "Production Started" : "Start Production"],
+            [production.some((item) => item.status === "Complete") ? "In progress" : "Upcoming", "Cooking & Packaging"],
+            [completedOrders.length ? "Today" : "Upcoming", completedOrders.length ? "Orders Completed" : "Orders Ready"],
+          ].map(([time, activity]) => <div key={activity} className="rounded-2xl border border-slate-200 p-4"><p className="text-sm font-bold text-[#d6a817]">{time}</p><p className="mt-1 font-bold">{activity}</p></div>)}
+        </div>
+      </section>
+
+      <section className="mt-6 rounded-3xl bg-[#081c35] p-6 text-white shadow-lg">
+        <h2 className="text-2xl font-bold">Quick Actions</h2>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
+          <Link href="/dashboard/miz-rita/kitchen" className="rounded-xl bg-[#d6a817] px-4 py-4 text-center font-bold text-[#081c35]">Start Production</Link>
+          <Link href="/dashboard/miz-rita/kitchen" className="rounded-xl border border-white/20 px-4 py-4 text-center font-bold">Kitchen Calculator</Link>
+          <Link href="/dashboard/miz-rita/inventory" className="rounded-xl border border-white/20 px-4 py-4 text-center font-bold">Inventory</Link>
+          <a href="#orders-management" className="rounded-xl border border-white/20 px-4 py-4 text-center font-bold">Orders</a>
+          <Link href="/dashboard/miz-rita/kitchen" className="rounded-xl border border-white/20 px-4 py-4 text-center font-bold">Print Kitchen Sheet</Link>
+          <Link href="/dashboard/miz-rita/inventory" className="rounded-xl border border-white/20 px-4 py-4 text-center font-bold">Generate Purchase List</Link>
+          <button onClick={() => window.print()} className="rounded-xl border border-white/20 px-4 py-4 font-bold">Print Delivery List</button>
+          <a href="#reports" className="rounded-xl border border-white/20 px-4 py-4 text-center font-bold">Reports</a>
+          <button id="close-day" onClick={onCloseDay} className="rounded-xl bg-emerald-600 px-4 py-4 font-bold sm:col-span-2 xl:col-span-1">Close Today&apos;s Operations</button>
+        </div>
+      </section>
+
+      {showEndOfDay && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-[#020b16]/80 p-4 backdrop-blur-sm">
+          <div className="mx-auto my-8 max-w-4xl overflow-hidden rounded-3xl bg-white shadow-2xl">
+            <div className="bg-emerald-600 p-7 text-center text-white"><CheckCircle2 className="mx-auto h-14 w-14" /><h2 className="mt-3 text-4xl font-bold">Excellent Work!</h2><p className="mt-2 text-lg">Today&apos;s kitchen operations are complete.</p></div>
+            <div className="p-7"><h3 className="text-2xl font-bold text-[#081c35]">Today&apos;s Results</h3>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{[
+                ["Orders Completed", completedOrders.length], ["Meals Produced", mealsCompleted], ["Meals Delivered", deliveredToday], ["Revenue", formatMoney(revenueToday)], ["Food Cost", formatMoney(foodCost)], ["Food Waste", "Tracked in Inventory"], ["Inventory Alerts", inventoryAlerts.length], ["Labor Hours", "Not tracked yet"],
+              ].map(([label, value]) => <div key={label} className="rounded-2xl bg-slate-50 p-4"><p className="text-sm text-slate-500">{label}</p><p className="mt-1 text-xl font-bold">{value}</p></div>)}</div>
+              <div className="mt-6 flex flex-wrap justify-end gap-2"><button onClick={() => window.print()} className="rounded-xl border px-5 py-3 font-bold"><Printer className="mr-2 inline h-4 w-4" />Print Summary</button><button onClick={onReturn} className="rounded-xl bg-[#081c35] px-5 py-3 font-bold text-white">Return To Dashboard</button></div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function OrderDetailsModal({
   order,
+  customer,
   customerName,
   updating,
+  workflowEvents,
   onClose,
+  onAdvance,
   onMarkCompleted,
   onDuplicate,
   onDelete,
 }: {
   order: Order;
+  customer: Customer | null;
   customerName: string;
   updating: boolean;
+  workflowEvents: OrderWorkflowEvent[];
   onClose: () => void;
+  onAdvance: () => Promise<void>;
   onMarkCompleted: () => Promise<void>;
   onDuplicate: () => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
-  const orderDetails = parseOrderDetails(order.notes);
+  const orderDetails = parseOrderDetails(order.notes, order.meal_count);
+  const currentWorkflowStatus = normalizeWorkflowStatus(order.order_status);
+  const nextWorkflowStatus = getNextWorkflowStatus(
+    currentWorkflowStatus,
+    order.delivery_method,
+  );
+  const deliveryAddress =
+    order.notes?.match(/^Delivery Address:\s*(.+)$/im)?.[1]?.trim() ||
+    "Not provided";
+  const assignedDriver =
+    order.notes?.match(/^Assigned Driver:\s*(.+)$/im)?.[1]?.trim() ||
+    "Not assigned";
+  const currentIndex = ORDER_WORKFLOW.indexOf(currentWorkflowStatus);
 
   const printOrder = (documentType: "invoice" | "packing-slip") => {
     const title =
@@ -1868,7 +2523,46 @@ function OrderDetailsModal({
             </div>
           </section>
 
+          <section className="rounded-3xl bg-white p-6 shadow-md">
+            <div className="flex items-center justify-between gap-4">
+              <h3 className="text-lg font-bold text-[#081c35]">Order Workflow</h3>
+              <OrderWorkflowBadge status={currentWorkflowStatus} />
+            </div>
+            <div className="mt-5 flex flex-wrap gap-2">
+              {ORDER_WORKFLOW.map((status, index) => (
+                <div key={status} className="flex items-center gap-2">
+                  <span
+                    className={`rounded-full px-3 py-1.5 text-xs font-bold ${
+                      index < currentIndex
+                        ? "bg-emerald-100 text-emerald-800"
+                        : index === currentIndex
+                          ? getWorkflowBadgeClass(status)
+                          : "bg-slate-100 text-slate-500"
+                    }`}
+                  >
+                    {status}
+                  </span>
+                  {index < ORDER_WORKFLOW.length - 1 ? (
+                    <span className="text-slate-300">→</span>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+            {nextWorkflowStatus ? (
+              <button
+                type="button"
+                onClick={() => void onAdvance()}
+                disabled={updating}
+                className="mt-5 w-full rounded-xl bg-[#081c35] px-4 py-3 font-bold text-white disabled:opacity-50"
+              >
+                {updating ? "Updating..." : `Move to ${nextWorkflowStatus}`}
+              </button>
+            ) : null}
+          </section>
+
           <section className="grid gap-4 sm:grid-cols-2">
+            <OrderInfoCard label="Phone" value={customer?.phone ? formatPhoneNumber(customer.phone) : "Not provided"} />
+            <OrderInfoCard label="Email" value={customer?.email || "Not provided"} />
             <OrderInfoCard
               label="Order Date"
               value={formatDate(order.order_date)}
@@ -1885,6 +2579,8 @@ function OrderDetailsModal({
               label="Delivery Method"
               value={order.delivery_method || "Pickup"}
             />
+            <OrderInfoCard label="Delivery Address" value={deliveryAddress} />
+            <OrderInfoCard label="Assigned Driver" value={assignedDriver} />
             <OrderInfoCard
               label="Meal Plan Purchased"
               value={orderDetails.mealPlan}
@@ -1910,6 +2606,10 @@ function OrderDetailsModal({
               value={formatMoney(Number(order.balance_due || 0))}
               emphasize={Number(order.balance_due || 0) > 0}
             />
+            <OrderInfoCard label="Payment Status" value={order.payment_status} />
+            <OrderInfoCard label="Kitchen Status" value={getDepartmentStatus(currentWorkflowStatus, "Kitchen")} />
+            <OrderInfoCard label="Packaging Status" value={getDepartmentStatus(currentWorkflowStatus, "Packaging")} />
+            <OrderInfoCard label="Delivery Status" value={getDepartmentStatus(currentWorkflowStatus, "Delivery")} />
           </section>
 
           <section className="rounded-3xl bg-white p-6 shadow-md">
@@ -1946,11 +2646,45 @@ function OrderDetailsModal({
           </section>
 
           <section className="rounded-3xl bg-white p-6 shadow-md">
-            <h3 className="text-lg font-bold text-[#081c35]">Order Notes</h3>
+            <h3 className="text-lg font-bold text-[#081c35]">Internal Notes</h3>
 
             <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">
               {orderDetails.freeformNotes}
             </p>
+          </section>
+
+          <section className="rounded-3xl bg-white p-6 shadow-md">
+            <h3 className="text-lg font-bold text-[#081c35]">Timeline</h3>
+            <div className="mt-5 space-y-4">
+              {(workflowEvents.length
+                ? workflowEvents
+                : [{
+                    id: `${order.id}-created`,
+                    status: normalizeWorkflowStatus(order.order_status),
+                    label: "Order Created",
+                    createdAt: `${order.order_date}T09:00:00`,
+                  }]
+              ).map((event, index) => (
+                <div key={event.id} className="grid grid-cols-[72px_12px_1fr] items-start gap-3">
+                  <p className="text-xs font-bold text-slate-500">
+                    {new Intl.DateTimeFormat("en-US", {
+                      hour: "numeric",
+                      minute: "2-digit",
+                    }).format(new Date(event.createdAt))}
+                  </p>
+                  <div className="relative mt-1">
+                    <span className="block h-3 w-3 rounded-full bg-[#d6a817]" />
+                    {index < workflowEvents.length - 1 ? (
+                      <span className="absolute left-[5px] top-3 h-7 w-px bg-slate-200" />
+                    ) : null}
+                  </div>
+                  <div>
+                    <p className="font-bold text-[#081c35]">{event.label}</p>
+                    <p className="text-xs text-slate-500">{event.status}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
           </section>
 
           <section className="rounded-3xl bg-white p-6 shadow-md">
@@ -2286,7 +3020,7 @@ function CustomerDetailsModal({
   const averageOrderValue = orders.length > 0 ? totalSpent / orders.length : 0;
 
   const totalMealsPurchased = orders.reduce((sum, order) => {
-    const details = parseOrderDetails(order.notes);
+    const details = parseOrderDetails(order.notes, order.meal_count);
     const meals = Number(details.numberOfMeals);
     return sum + (Number.isFinite(meals) ? meals : 0);
   }, 0);
@@ -2300,10 +3034,15 @@ function CustomerDetailsModal({
   );
 
   const lastOrder = sortedOrders[0] || null;
+  const lastDelivery = sortedOrders.find(
+    (order) =>
+      (order.delivery_method ?? "").toLowerCase().includes("delivery") &&
+      ["Delivered", "Completed"].includes(normalizeWorkflowStatus(order.order_status)),
+  );
 
   const favoriteMeals = Object.entries(
     orders.reduce<Record<string, number>>((counts, order) => {
-      const mealPlan = parseOrderDetails(order.notes).mealPlan;
+      const mealPlan = parseOrderDetails(order.notes, order.meal_count).mealPlan;
 
       if (mealPlan !== "Not specified") {
         counts[mealPlan] = (counts[mealPlan] || 0) + 1;
@@ -2328,7 +3067,7 @@ function CustomerDetailsModal({
   const subscriptionPlan = subscriptionTag?.tag || "Not Enrolled";
   const subscriptionStatus = cancelledTag ? "Cancelled" : pausedTag ? "Paused" : subscriptionTag ? "Active" : "Inactive";
   const subscriptionActive = subscriptionStatus === "Active";
-  const latestOrderDetails = lastOrder ? parseOrderDetails(lastOrder.notes) : null;
+  const latestOrderDetails = lastOrder ? parseOrderDetails(lastOrder.notes, lastOrder.meal_count) : null;
   const subscriptionMeals = latestOrderDetails?.numberOfMeals || "Not set";
   const subscriptionDelivery = lastOrder?.delivery_method || "Not set";
   const subscriptionDay = lastOrder?.fulfillment_date
@@ -2413,18 +3152,17 @@ function CustomerDetailsModal({
 
   async function setOrderPayment(order: Order, paid: boolean) {
     setPaymentSavingId(order.id);
-    const total = Number(order.total || 0);
-    const amountPaid = paid ? total : 0;
-    const { data, error } = await supabase
-      .from("gbgs_orders")
-      .update({
-        payment_status: paid ? "Paid" : "Unpaid",
-        amount_paid: amountPaid,
-        balance_due: paid ? 0 : total,
-      })
-      .eq("id", order.id)
-      .select("*")
-      .single();
+    const { error: statusError } = await supabase.rpc("gbgs_set_order_payment_status", {
+      p_business_id: businessId,
+      p_order_id: order.id,
+      p_payment_status: paid ? "Paid" : "Unpaid",
+    });
+    if (statusError) {
+      window.alert(statusError.message);
+      setPaymentSavingId(null);
+      return;
+    }
+    const { data, error } = await supabase.from("gbgs_orders").select("*").eq("id", order.id).single();
     if (error || !data) {
       window.alert(error?.message || "Payment status could not be updated.");
     } else {
@@ -2434,7 +3172,7 @@ function CustomerDetailsModal({
   }
 
   function printCustomerOrder(order: Order) {
-    const details = parseOrderDetails(order.notes);
+    const details = parseOrderDetails(order.notes, order.meal_count);
     const printWindow = window.open("", "_blank", "width=1000,height=900");
     if (!printWindow) return;
 
@@ -2845,6 +3583,10 @@ function CustomerDetailsModal({
           </tr>`,
       )
       .join("");
+    const dietaryRows = dietaryProfileFields(parseDietaryProfile(customer.dietary_notes))
+      .filter(([, value]) => value)
+      .map(([label, value]) => `<p><strong>${escapeHtml(label)}:</strong><br />${escapeHtml(value).replace(/\n/g, "<br />")}</p>`)
+      .join("") || "<p>None</p>";
 
     printWindow.document.write(`
       <html>
@@ -2870,7 +3612,7 @@ function CustomerDetailsModal({
             <div class="card"><strong>Balance Due</strong><br />${escapeHtml(formatMoney(balanceDue))}</div>
           </div>
           <h2>Dietary Notes</h2>
-          <p>${escapeHtml(customer.dietary_notes || "No dietary notes recorded.")}</p>
+          ${dietaryRows}
           <h2>Internal CRM Notes</h2>
           <p>${escapeHtml(crmNotes || "No internal notes recorded.")}</p>
           <h2>Order History</h2>
@@ -3101,11 +3843,11 @@ function CustomerDetailsModal({
 
           <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <ProfileStat
-              label="Total Orders"
+              label="Lifetime Orders"
               value={orders.length.toString()}
             />
             <ProfileStat
-              label="Lifetime Value"
+              label="Lifetime Revenue"
               value={formatMoney(totalSpent)}
             />
             <ProfileStat
@@ -3126,6 +3868,15 @@ function CustomerDetailsModal({
               label="Last Order"
               value={lastOrder ? formatDate(lastOrder.order_date) : "No orders"}
             />
+            <ProfileStat
+              label="Last Delivery Date"
+              value={
+                lastDelivery?.fulfillment_date
+                  ? formatDate(lastDelivery.fulfillment_date)
+                  : "No deliveries"
+              }
+            />
+            <ProfileStat label="Current Status" value={customer.customer_status} />
           </section>
 
           <section className="rounded-3xl bg-white p-6 shadow-md">
@@ -3150,10 +3901,7 @@ function CustomerDetailsModal({
 
           <section className="rounded-3xl bg-white p-6 shadow-md">
             <h3 className="text-lg font-bold text-[#081c35]">Dietary Notes</h3>
-
-            <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-600">
-              {customer.dietary_notes || "No dietary notes recorded."}
-            </p>
+            <div className="mt-3 text-sm leading-6 text-slate-600"><DietaryNotes notes={customer.dietary_notes} /></div>
           </section>
 
           <section className="grid gap-6 lg:grid-cols-2">
@@ -3414,7 +4162,7 @@ function CustomerDetailsModal({
               <div className="mt-5 space-y-3">
                 {orders.map((order) => {
                   const expanded = expandedOrderId === order.id;
-                  const details = parseOrderDetails(order.notes);
+                  const details = parseOrderDetails(order.notes, order.meal_count);
                   return (
                     <div key={order.id} className="overflow-hidden rounded-2xl border border-slate-200">
                       <button
@@ -3838,13 +4586,113 @@ function OrderSummary({ form }: { form: OrderFormState }) {
   );
 }
 
+function normalizeWorkflowStatus(value: string): OrderWorkflowStatus {
+  const normalized = value.trim().toLowerCase();
+  const aliases: Record<string, OrderWorkflowStatus> = {
+    pending: "New Order",
+    new: "New Order",
+    "new order": "New Order",
+    paid: "Paid",
+    kitchen: "Kitchen",
+    prep: "Kitchen",
+    "in progress": "Kitchen",
+    preparing: "Cooking",
+    cooking: "Cooking",
+    packaging: "Packaging",
+    ready: "Ready For Pickup",
+    "ready for pickup": "Ready For Pickup",
+    "out for delivery": "Out For Delivery",
+    delivered: "Delivered",
+    completed: "Completed",
+  };
+  return aliases[normalized] ?? "New Order";
+}
+
+function getNextWorkflowStatus(
+  current: OrderWorkflowStatus,
+  deliveryMethod?: string | null,
+): OrderWorkflowStatus | null {
+  if (
+    current === "Ready For Pickup" &&
+    !(deliveryMethod ?? "").toLowerCase().includes("delivery")
+  ) {
+    return "Completed";
+  }
+  const index = ORDER_WORKFLOW.indexOf(current);
+  return index >= 0 && index < ORDER_WORKFLOW.length - 1
+    ? ORDER_WORKFLOW[index + 1]
+    : null;
+}
+
+function getWorkflowEventLabel(status: OrderWorkflowStatus) {
+  const labels: Record<OrderWorkflowStatus, string> = {
+    "New Order": "Order Created",
+    Paid: "Payment Received",
+    Kitchen: "Order moved to Kitchen",
+    Cooking: "Kitchen Started",
+    Packaging: "Packaging Started",
+    "Ready For Pickup": "Packaging Complete",
+    "Out For Delivery": "Driver Assigned",
+    Delivered: "Order Delivered",
+    Completed: "Order Completed",
+  };
+  return labels[status];
+}
+
+function getWorkflowBadgeClass(status: OrderWorkflowStatus) {
+  if (status === "Cooking") return "bg-orange-100 text-orange-800";
+  if (status === "Packaging") return "bg-purple-100 text-purple-800";
+  if (["Delivered", "Completed", "Ready For Pickup"].includes(status)) {
+    return "bg-emerald-100 text-emerald-800";
+  }
+  if (["Paid", "Kitchen", "Out For Delivery"].includes(status)) {
+    return "bg-blue-100 text-blue-800";
+  }
+  return "bg-slate-100 text-slate-700";
+}
+
+function getDepartmentStatus(
+  current: OrderWorkflowStatus,
+  department: "Kitchen" | "Packaging" | "Delivery",
+) {
+  const currentIndex = ORDER_WORKFLOW.indexOf(current);
+  const startIndex =
+    department === "Kitchen"
+      ? ORDER_WORKFLOW.indexOf("Kitchen")
+      : department === "Packaging"
+        ? ORDER_WORKFLOW.indexOf("Packaging")
+        : ORDER_WORKFLOW.indexOf("Out For Delivery");
+  const endIndex =
+    department === "Kitchen"
+      ? ORDER_WORKFLOW.indexOf("Packaging")
+      : department === "Packaging"
+        ? ORDER_WORKFLOW.indexOf("Ready For Pickup")
+        : ORDER_WORKFLOW.indexOf("Completed");
+  if (currentIndex < startIndex) return "Waiting";
+  if (currentIndex >= endIndex) return "Completed";
+  return "Active";
+}
+
+function OrderWorkflowBadge({ status }: { status: OrderWorkflowStatus }) {
+  return (
+    <span className={`rounded-full px-3 py-1.5 text-xs font-bold ${getWorkflowBadgeClass(status)}`}>
+      {status}
+    </span>
+  );
+}
+
 function StatusBadge({ value }: { value: string }) {
   const normalized = value.toLowerCase();
 
   let className =
     "bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-200";
 
-  if (["active", "completed", "paid", "confirmed"].includes(normalized)) {
+  if (
+    ORDER_WORKFLOW.map((status) => status.toLowerCase()).includes(normalized) ||
+    ["pending", "new", "prep", "ready"].includes(normalized)
+  ) {
+    className = getWorkflowBadgeClass(normalizeWorkflowStatus(value));
+  } else if (["active", "completed", "paid", "confirmed"].includes(normalized)) {
     className = "bg-green-50 text-green-700 ring-1 ring-inset ring-green-200";
   } else if (
     ["pending", "partial", "in progress", "lead"].includes(normalized)
@@ -3889,8 +4737,6 @@ function getProductionStatus(fulfillmentDate: string | null) {
 
 function buildOrderNotes(form: OrderFormState) {
   const metadata = [
-    `Meal Plan: ${form.meal_plan.trim() || "Not specified"}`,
-    `Number of Meals: ${form.number_of_meals.trim() || "Not specified"}`,
     `Pickup/Delivery Date: ${
       form.fulfillment_date
         ? formatDate(form.fulfillment_date)
@@ -3906,14 +4752,81 @@ function buildOrderNotes(form: OrderFormState) {
     : metadata.join("\n");
 }
 
-function parseOrderDetails(notes?: string | null) {
+type DietaryProfile = {
+  dietaryRestrictions: string;
+  foodAllergies: string;
+  mealPreferences: string;
+  kitchenNotes: string;
+};
+
+function DietaryNotes({ notes }: { notes: string | null }) {
+  const profile = parseDietaryProfile(notes);
+  const fields = dietaryProfileFields(profile);
+  const available = fields.filter(([, value]) => value);
+
+  if (!available.length) return <>None</>;
+
+  return <div className="space-y-3">{available.map(([label, value]) => (
+    <div key={label}>
+      <p className="font-semibold text-[#081c35]">{label}:</p>
+      <p className="whitespace-pre-line">{value}</p>
+    </div>
+  ))}</div>;
+}
+
+function dietaryProfileFields(profile: DietaryProfile): Array<[string, string]> {
+  return [
+    ["Dietary Restrictions", profile.dietaryRestrictions],
+    ["Food Allergies", profile.foodAllergies],
+    ["Meal Preferences", profile.mealPreferences],
+    ["Kitchen Notes", profile.kitchenNotes],
+  ];
+}
+
+function parseDietaryProfile(notes: string | null): DietaryProfile {
+  const empty: DietaryProfile = { dietaryRestrictions: "", foodAllergies: "", mealPreferences: "", kitchenNotes: "" };
+  const text = notes?.trim() ?? "";
+  if (!text) return empty;
+
+  const prefix = "GBGS_CUSTOMER_PROFILE_V1:";
+  const serialized = text.startsWith(prefix) ? text.slice(prefix.length).trim() : text;
+  if (text.startsWith("GBGS_") && !text.startsWith(prefix)) return empty;
+
+  if (serialized.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(serialized) as Record<string, unknown>;
+      const field = (key: keyof DietaryProfile) => typeof parsed[key] === "string" ? parsed[key].trim() : "";
+      return {
+        dietaryRestrictions: field("dietaryRestrictions"),
+        foodAllergies: field("foodAllergies"),
+        mealPreferences: field("mealPreferences"),
+        kitchenNotes: field("kitchenNotes"),
+      };
+    } catch {
+      return empty;
+    }
+  }
+
+  const labels = ["Dietary Restrictions", "Food Allergies", "Meal Preferences", "Kitchen Notes", "Address", "Delivery Preference", "Pickup Location", "Emergency Contact", "Phone", "Email"];
+  const labelPattern = labels.join("|");
+  const value = (label: string) => text.match(new RegExp(`(?:^|\\n)${label}:\\s*([\\s\\S]*?)(?=\\n(?:${labelPattern}):|$)`, "i"))?.[1]?.trim() ?? "";
+  const structured = labels.some((label) => new RegExp(`(?:^|\\n)${label}:`, "i").test(text));
+
+  return {
+    dietaryRestrictions: structured ? value("Dietary Restrictions") : text,
+    foodAllergies: value("Food Allergies"),
+    mealPreferences: value("Meal Preferences"),
+    kitchenNotes: value("Kitchen Notes"),
+  };
+}
+
+function parseOrderDetails(notes: string | null | undefined, mealCount: number) {
   const value = notes || "";
 
   const mealPlan =
     value.match(/^Meal Plan:\s*(.+)$/im)?.[1]?.trim() || "Not specified";
 
-  const numberOfMeals =
-    value.match(/^Number of Meals:\s*(.+)$/im)?.[1]?.trim() || "Not specified";
+  const numberOfMeals = String(mealCount);
 
   const pickupDeliveryDate =
     value.match(/^Pickup\/Delivery Date:\s*(.+)$/im)?.[1]?.trim() ||
@@ -3975,6 +4888,10 @@ function formatDate(value: string) {
     day: "numeric",
     year: "numeric",
   }).format(date);
+}
+
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(value));
 }
 
 function getErrorMessage(error: unknown) {

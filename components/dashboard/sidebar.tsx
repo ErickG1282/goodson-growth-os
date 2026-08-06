@@ -16,6 +16,7 @@ const routes: Record<string, string> = {
   "Dispatch HQ": "/dashboard/dispatch",
   "Tire Shop HQ": "/dashboard/tire-shop",
   "Miz Rita HQ": "/dashboard/miz-rita",
+  Kitchen: "/dashboard/kitchen",
   "Life HQ": "/dashboard/life",
   "CEO Review": "/dashboard/ceo-review",
   Calendar: "/dashboard/calendar",
@@ -29,7 +30,6 @@ export function SidebarContent({ onNavigate }: SidebarProps) {
 
   return (
     <div className="flex h-full flex-col bg-[#061B33] text-white">
-      {/* Logo */}
       <div className="flex items-center justify-center border-b border-white/10 px-6 py-6">
         <Image
           src="/gbgs-logo-transparent.png"
@@ -41,7 +41,6 @@ export function SidebarContent({ onNavigate }: SidebarProps) {
         />
       </div>
 
-      {/* Navigation */}
       <nav className="flex-1 overflow-y-auto px-3 py-4">
         <ul className="flex flex-col gap-1">
           {navItems.map((item) => {
@@ -58,22 +57,20 @@ export function SidebarContent({ onNavigate }: SidebarProps) {
                     "group relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
                     active
                       ? "bg-white/5 text-white"
-                      : "text-white/70 hover:bg-white/5 hover:text-white"
+                      : "text-white/70 hover:bg-white/5 hover:text-white",
                   )}
                 >
                   {active && (
                     <span className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-[#C9A227]" />
                   )}
-
                   <Icon
                     className={cn(
                       "h-5 w-5 shrink-0",
                       active
                         ? "text-[#C9A227]"
-                        : "text-white/60 group-hover:text-[#C9A227]"
+                        : "text-white/60 group-hover:text-[#C9A227]",
                     )}
                   />
-
                   <span>{item.label}</span>
                 </Link>
               </li>
@@ -82,7 +79,6 @@ export function SidebarContent({ onNavigate }: SidebarProps) {
         </ul>
       </nav>
 
-      {/* Logout */}
       <div className="border-t border-white/10 px-3 py-4">
         <Link
           href="/"
