@@ -164,7 +164,12 @@ export default function KitchenPage() {
   const [productionActionError, setProductionActionError] = useState(false);
   const [startingProduction, setStartingProduction] = useState(false);
   const [selectedProductionOrders, setSelectedProductionOrders] = useState<Set<string>>(new Set());
+  const [startOrder, setStartOrder] = useState<string[] | null>(null);
+  const [stopOrder, setStopOrder] = useState<string[] | null>(null);
   const [completionOrder, setCompletionOrder] = useState<string[] | null>(null);
+  const [cookingCompletedOrder, setCookingCompletedOrder] = useState<string[] | null>(null);
+  const [packagingStartOrder, setPackagingStartOrder] = useState<string[] | null>(null);
+  const [activeWorkflowOrder, setActiveWorkflowOrder] = useState<string[] | null>(null);
   const [reopenOrder, setReopenOrder] = useState<string[] | null>(null);
   const [reopenReason, setReopenReason] = useState("");
   const [canReopenProduction, setCanReopenProduction] = useState(false);
@@ -562,6 +567,16 @@ export default function KitchenPage() {
   const mealsPackaging = mealsForStatus("Packaging");
   const queueCompletedMeals = mealsForStatus("Completed");
   const queueProgress = queueSummary.progress;
+  const workflowOrderSeed = packagingStartOrder ?? cookingCompletedOrder ?? stopOrder ?? startOrder ?? activeWorkflowOrder;
+  const workflowOrder = workflowOrderSeed
+    ? liveKitchenOrders.find((order) => order[6] === workflowOrderSeed[6]) ?? workflowOrderSeed
+    : null;
+  const workflowPanelStep = packagingStartOrder ? 6
+    : cookingCompletedOrder || workflowOrder?.[5] === "Awaiting Packaging" ? 5
+      : stopOrder ? 4
+        : ["Paused", "Stopped"].includes(workflowOrder?.[5] ?? "") ? 3
+          : workflowOrder?.[5] === "Cooking" ? 2
+            : 1;
   const completedItems = kitchenTotals.statuses.Complete;
   const overallProgress = productionCalculator.length
     ? Math.round((completedItems / productionCalculator.length) * 100)
@@ -665,7 +680,7 @@ export default function KitchenPage() {
     setSaveMessage("Kitchen production completed.");
   }
 
-  async function runProductionAction(orderId: string, action: "start" | "pause" | "resume" | "stop" | "complete", reason?: string) {
+  async function runProductionAction(orderId: string, action: "start" | "pause" | "resume" | "stop" | "complete" | "start_packaging", reason?: string) {
     if (!businessId) throw new Error("Business connection is not ready.");
     const { error } = await supabase.rpc("gbgs_transition_production_order", {
       p_business_id: businessId,
@@ -705,11 +720,10 @@ export default function KitchenPage() {
     }
   }
 
-  async function handleProductionAction(order: string[], action: "start" | "pause" | "resume" | "stop" | "complete") {
+  async function handleProductionAction(order: string[], action: "start" | "pause" | "resume" | "stop" | "complete" | "start_packaging") {
     try {
       let reason: string | undefined;
       if (action === "stop") {
-        if (!window.confirm("Stop production?")) return;
         const choices = "Ingredient shortage, Equipment issue, Customer cancelled, Kitchen emergency, Quality issue, Other";
         const selectedReason = window.prompt(`Reason required. Choose one:\n${choices}`)?.trim();
         if (!selectedReason) throw new Error("A stop reason is required.");
@@ -721,13 +735,43 @@ export default function KitchenPage() {
       setProductionActionError(false);
       setProductionActionMessage(`${action[0].toUpperCase()}${action.slice(1)} in progress...`);
       await runProductionAction(order[6], action, reason);
-      const completedLabels = { start: "started", pause: "paused", resume: "resumed", stop: "stopped", complete: "completed" } as const;
+      const completedLabels = { start: "started", pause: "paused", resume: "resumed", stop: "stopped", complete: "completed", start_packaging: "moved into packaging" } as const;
       setProductionActionMessage(`Production ${completedLabels[action]} successfully.`);
       setRefreshVersion((version) => version + 1);
+      return true;
     } catch (caught) {
       setProductionActionError(true);
       setProductionActionMessage(caught instanceof Error ? caught.message : "Production action failed.");
+      return false;
     }
+  }
+
+  async function confirmCookingCompletion() {
+    if (!completionOrder) return;
+    const order = completionOrder;
+    const completed = await handleProductionAction(order, "complete");
+    if (!completed) return;
+    setCompletionOrder(null);
+    const completedOrder = order.map((value, index) => index === 5 ? "Awaiting Packaging" : value);
+    setActiveWorkflowOrder(completedOrder);
+    setCookingCompletedOrder(completedOrder);
+  }
+
+  async function confirmPackagingStart() {
+    if (!packagingStartOrder) return;
+    const order = packagingStartOrder;
+    const started = await handleProductionAction(order, "start_packaging");
+    if (!started) return;
+    setPackagingStartOrder(null);
+    setCookingCompletedOrder(null);
+    setActiveWorkflowOrder(order.map((value, index) => index === 5 ? "Packaging" : value));
+  }
+
+  async function runWorkflowPanelAction(order: string[], action: "pause" | "resume") {
+    setActiveWorkflowOrder(order);
+    const succeeded = await handleProductionAction(order, action);
+    if (!succeeded) return;
+    setActiveWorkflowOrder(order.map((value, index) => index === 5 ? (action === "pause" ? "Paused" : "Cooking") : value));
   }
 
   async function reopenProduction() {
@@ -1169,15 +1213,7 @@ export default function KitchenPage() {
 
             </div>
             <div>
-
-              <p className="text-sm font-bold uppercase tracking-[0.25em] text-[#d6a817]">
-                Production Board
-              </p>
-
-              <h2 className="mt-2 text-2xl font-bold text-slate-900">
-                Today's Production Orders
-              </h2>
-
+              <div className="flex items-center gap-3"><ChefHat className="text-[#081c35]" size={30} /><div><h2 className="text-2xl font-black text-slate-950">KITCHEN HQ</h2><p className="font-bold text-slate-800">Production Queue</p><p className="text-xs text-slate-500">Track and manage all meal production in real time.</p></div></div>
             </div>
 
             <button onClick={() => window.print()} className="rounded-xl bg-[#081c35] px-5 py-3 font-semibold text-white hover:opacity-90">
@@ -1188,23 +1224,33 @@ export default function KitchenPage() {
 
           </div>
 
+          <div className="mt-5 grid grid-cols-2 gap-3 md:ml-auto md:max-w-xl md:grid-cols-4">
+            {[
+              ["Total Orders", productionQueueOrders.length, "bg-blue-50 text-blue-700"],
+              ["Cooking", productionQueueOrders.filter((item) => item.production_status === "Cooking").length, "bg-emerald-50 text-emerald-700"],
+              ["Packaging", productionQueueOrders.filter((item) => item.production_status === "Packaging").length, "bg-purple-50 text-purple-700"],
+              ["Waiting", productionQueueOrders.filter((item) => item.production_status === "Waiting").length, "bg-orange-50 text-orange-700"],
+            ].map(([label, value, color]) => <div key={String(label)} className={`rounded-xl px-4 py-3 text-center ${color}`}><p className="text-2xl font-black">{value}</p><p className="text-xs font-semibold text-slate-700">{label}</p></div>)}
+          </div>
+
           <div className="mt-6 flex gap-3">
             <button type="button" onClick={() => setSelectedProductionOrders(new Set(productionQueueOrders.filter((order) => order.production_status === "Waiting").map((order) => order.id)))} className="rounded-lg bg-[#081c35] px-4 py-2 text-sm font-bold text-white">Select All</button>
             <button type="button" onClick={() => setSelectedProductionOrders(new Set())} className="rounded-lg border px-4 py-2 text-sm font-bold">Clear Selection</button>
           </div>
 
-          <div className="mt-4 overflow-x-auto rounded-2xl border">
+          <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(390px,2fr)]">
+          <div className="overflow-x-auto rounded-2xl border">
 
-            <table className="min-w-full">
+            <table className="min-w-[760px] text-xs [&_td]:!px-2 [&_th]:!px-2">
 
               <thead className="bg-slate-100">
 
                 <tr>
 
-                  <th className="px-3 py-4 text-left">Select</th>
+                  <th className="px-3 py-4 text-left"><span className="sr-only">Select</span></th>
 
                   <th className="px-5 py-4 text-left">
-                    Order
+                    Order ID
                   </th>
 
                   <th className="px-5 py-4 text-left">
@@ -1212,23 +1258,19 @@ export default function KitchenPage() {
                   </th>
 
                   <th className="px-5 py-4 text-left">
-                    Meal
+                    Meals
                   </th>
 
                   <th className="px-5 py-4 text-left">
-                    Meal Count
+                    Status
                   </th>
 
                   <th className="px-5 py-4 text-left">
-                    Production Status
-                  </th>
-
-                  <th className="px-5 py-4 text-left">
-                    Elapsed Time
+                    Timer
                   </th>
 
                   <th className="px-5 py-4 text-left">Current Stage</th>
-                  <th className="px-5 py-4 text-left">Assigned Cook</th>
+                  <th className="px-5 py-4 text-left">Assigned To</th>
                   <th className="px-5 py-4 text-left">Actions</th>
 
                 </tr>
@@ -1257,10 +1299,6 @@ export default function KitchenPage() {
                     </td>
 
                     <td className="px-5 py-4">
-                      {order[3]}
-                    </td>
-
-                    <td className="px-5 py-4">
                       {order[2]}
                     </td>
 
@@ -1269,7 +1307,7 @@ export default function KitchenPage() {
                       <span
                         className={`rounded-full px-3 py-1 text-xs font-semibold
 
-                      ${order[5] === "Complete"
+                      ${["Complete", "Awaiting Packaging"].includes(order[5])
                             ? "bg-green-100 text-green-700"
                             : order[5] === "Cooking"
                               ? "bg-blue-100 text-blue-700"
@@ -1288,17 +1326,18 @@ export default function KitchenPage() {
                     </td>
 
                     <td className="px-5 py-4 font-mono">{formatElapsedTime(elapsedProductionTime(order))}</td>
-                    <td className="px-5 py-4">{order[5]}</td>
+                    <td className="px-5 py-4">{order[5] === "Paused" ? "Cooking Paused" : order[5] === "Awaiting Packaging" ? "Cooking Completed" : order[5]}</td>
                     <td className="px-5 py-4 text-slate-500">Unassigned</td>
                     <td className="px-5 py-4" onClick={(event) => event.stopPropagation()}>
-                      <div className="flex flex-wrap gap-2">
-                        {order[5] === "Waiting" && <button onClick={() => void handleProductionAction(order, "start")} className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white">Start</button>}
-                        {order[5] === "Cooking" && <button onClick={() => void handleProductionAction(order, "pause")} className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-white">Pause</button>}
-                        {order[5] === "Paused" && <button onClick={() => void handleProductionAction(order, "resume")} className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-bold text-white">Resume</button>}
-                        {["Cooking", "Paused"].includes(order[5]) && <button onClick={() => void handleProductionAction(order, "stop")} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white">Stop</button>}
-                        {["Cooking", "Paused"].includes(order[5]) && <button onClick={() => setCompletionOrder(order)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white">Complete</button>}
-                        {order[5] === "Packaging" && <div className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700">Production Completed</div>}
-                        {order[5] === "Packaging" && canReopenProduction && <div className="rounded-lg border border-slate-200 p-2"><p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Manager Actions</p><button onClick={() => { setReopenOrder(order); setReopenReason(""); }} className="rounded-lg bg-[#081c35] px-3 py-1.5 text-xs font-bold text-white">Reopen Production</button></div>}
+                      <div className="flex flex-nowrap items-center gap-2">
+                        {order[5] === "Waiting" && <button onClick={() => { setActiveWorkflowOrder(order); setStartOrder(order); }} className="whitespace-nowrap rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white">Start Cooking</button>}
+                        {order[5] === "Cooking" && <button onClick={() => void runWorkflowPanelAction(order, "pause")} className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-white">Pause</button>}
+                        {["Paused", "Stopped"].includes(order[5]) && <button onClick={() => void runWorkflowPanelAction(order, "resume")} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white">Resume</button>}
+                        {["Cooking", "Paused"].includes(order[5]) && <button onClick={() => { setActiveWorkflowOrder(order); setStopOrder(order); }} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white">Stop</button>}
+                        {["Cooking", "Paused"].includes(order[5]) && <button onClick={() => { setActiveWorkflowOrder(order); setCompletionOrder(order); }} className="whitespace-nowrap rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white">Complete Cooking</button>}
+                        {order[5] === "Awaiting Packaging" && <button onClick={() => { setActiveWorkflowOrder(order); setCookingCompletedOrder(order); }} className="whitespace-nowrap rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-bold text-white">Start Packaging</button>}
+                        {order[5] === "Awaiting Packaging" && canReopenProduction && <div className="rounded-lg border border-slate-200 p-2"><p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Manager Actions</p><button onClick={() => { setReopenOrder(order); setReopenReason(""); }} className="rounded-lg bg-[#081c35] px-3 py-1.5 text-xs font-bold text-white">Reopen Production</button></div>}
+                        {order[5] === "Packaging" && <div className="rounded-lg bg-purple-50 px-3 py-1.5 text-xs font-bold text-purple-700">Packaging In Progress</div>}
                       </div>
                     </td>
 
@@ -1309,6 +1348,54 @@ export default function KitchenPage() {
 
             </table>
 
+          </div>
+
+          <aside className="xl:sticky xl:top-4">
+            {!workflowOrder ? <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center"><ChefHat className="mx-auto text-slate-400" size={34} /><h3 className="mt-3 font-black text-slate-800">Select an order action</h3><p className="mt-1 text-sm text-slate-500">Choose an action in the production table to load that order&apos;s workflow here.</p></div> : (
+              <div className={`grid grid-cols-[105px_minmax(0,1fr)] overflow-hidden rounded-2xl border-2 ${workflowPanelStep === 2 ? "border-blue-500 bg-blue-50/40" : workflowPanelStep === 3 ? "border-orange-400 bg-orange-50/40" : workflowPanelStep === 4 ? "border-red-400 bg-red-50/40" : workflowPanelStep === 6 ? "border-purple-400 bg-purple-50/40" : "border-emerald-500 bg-emerald-50/40"}`}>
+                <div className={`flex flex-col items-center justify-center p-4 text-center ${workflowPanelStep === 2 ? "text-blue-700" : workflowPanelStep === 3 ? "text-orange-600" : workflowPanelStep === 4 ? "text-red-600" : workflowPanelStep === 6 ? "text-purple-700" : "text-emerald-700"}`}><span className="flex h-7 w-7 items-center justify-center rounded-md bg-current text-sm font-black text-white"><span className="text-white">{workflowPanelStep}</span></span><p className="mt-3 text-xs font-black uppercase leading-tight">{workflowPanelStep === 1 ? "Start Cooking" : workflowPanelStep === 2 ? "Cooking In Progress" : workflowPanelStep === 3 ? "Cooking Paused" : workflowPanelStep === 4 ? "Stop Cooking" : workflowPanelStep === 5 ? "Cooking Completed" : "Start Packaging"}</p></div>
+                <div className="m-2 rounded-xl border border-slate-200 bg-white p-5 shadow-md">
+                  {workflowPanelStep === 1 && <><div className="flex items-start gap-3"><div className="rounded-full bg-emerald-100 p-3 text-emerald-700"><ChefHat /></div><div><h3 className="font-black">Start Cooking</h3><p className="mt-1 text-sm text-slate-600">Are you sure you want to start cooking this order?</p></div></div><dl className="mt-4 space-y-1 text-sm"><div><dt className="inline text-slate-500">Order ID: </dt><dd className="inline font-semibold">#{workflowOrder[0]}</dd></div><div><dt className="inline text-slate-500">Customer: </dt><dd className="inline font-semibold">{workflowOrder[1]}</dd></div><div><dt className="inline text-slate-500">Meals: </dt><dd className="inline font-semibold">{workflowOrder[2]}</dd></div></dl><div className="mt-5 flex justify-end gap-2"><button onClick={() => { setStartOrder(null); setActiveWorkflowOrder(null); }} className="rounded-lg border px-4 py-2 text-xs font-bold">Cancel</button><button onClick={() => { const order=workflowOrder; setStartOrder(null); void handleProductionAction(order,"start").then((ok) => { if(ok)setActiveWorkflowOrder(order.map((value,index)=>index===5?"Cooking":value)); }); }} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white">Start Cooking</button></div></>}
+                  {workflowPanelStep === 2 && <><div className="flex items-start gap-3"><div className="rounded-full bg-blue-100 p-3 text-blue-700"><ChefHat /></div><div><h3 className="font-black">Cooking in Progress</h3><p className="mt-1 text-sm text-slate-600">Order is currently being cooked.</p></div></div><dl className="mt-4 space-y-1 text-sm"><div><dt className="inline text-slate-500">Order ID: </dt><dd className="inline font-semibold">#{workflowOrder[0]}</dd></div><div><dt className="inline text-slate-500">Elapsed Time: </dt><dd className="inline font-mono font-semibold">{formatElapsedTime(elapsedProductionTime(workflowOrder))}</dd></div></dl><div className="mt-5 flex flex-wrap justify-end gap-2"><button onClick={() => void runWorkflowPanelAction(workflowOrder,"pause")} className="rounded-lg bg-amber-500 px-4 py-2 text-xs font-bold text-white">Pause</button><button onClick={() => setStopOrder(workflowOrder)} className="rounded-lg bg-red-600 px-4 py-2 text-xs font-bold text-white">Stop</button><button onClick={() => setCompletionOrder(workflowOrder)} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white">Complete Cooking</button></div></>}
+                  {workflowPanelStep === 3 && <><div className="flex items-start gap-3"><div className="rounded-full bg-orange-100 p-3 text-orange-600"><Pause /></div><div><h3 className="font-black">Cooking Paused</h3><p className="mt-1 text-sm text-slate-600">Cooking has been paused.</p></div></div><dl className="mt-4 space-y-1 text-sm"><div><dt className="inline text-slate-500">Order ID: </dt><dd className="inline font-semibold">#{workflowOrder[0]}</dd></div><div><dt className="inline text-slate-500">Paused Time: </dt><dd className="inline font-mono font-semibold">{formatElapsedTime(elapsedProductionTime(workflowOrder))}</dd></div></dl><div className="mt-5 flex flex-wrap justify-end gap-2"><button onClick={() => void runWorkflowPanelAction(workflowOrder,"resume")} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white">Resume</button>{workflowOrder[5] !== "Stopped" && <button onClick={() => setStopOrder(workflowOrder)} className="rounded-lg bg-red-600 px-4 py-2 text-xs font-bold text-white">Stop</button>}<button onClick={() => setCompletionOrder(workflowOrder)} disabled={workflowOrder[5] === "Stopped"} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-40">Complete Cooking</button></div></>}
+                  {workflowPanelStep === 4 && <><div className="flex items-start gap-3"><div className="rounded-full bg-red-100 p-3 text-red-700"><AlertTriangle /></div><div><h3 className="font-black">Stop Cooking</h3><p className="mt-1 text-sm text-slate-600">Are you sure you want to stop cooking this order?</p><p className="text-sm text-slate-600">This will stop the cooking process.</p></div></div><dl className="mt-4 space-y-1 text-sm"><div><dt className="inline text-slate-500">Order ID: </dt><dd className="inline font-semibold">#{workflowOrder[0]}</dd></div><div><dt className="inline text-slate-500">Elapsed Time: </dt><dd className="inline font-mono font-semibold">{formatElapsedTime(elapsedProductionTime(workflowOrder))}</dd></div></dl><div className="mt-5 flex justify-end gap-2"><button onClick={() => setStopOrder(null)} className="rounded-lg border px-4 py-2 text-xs font-bold">Cancel</button><button onClick={() => { const order=workflowOrder; setStopOrder(null); void handleProductionAction(order,"stop").then((ok)=>{if(ok)setActiveWorkflowOrder(order.map((value,index)=>index===5?"Stopped":value));}); }} className="rounded-lg bg-red-600 px-4 py-2 text-xs font-bold text-white">Stop Cooking</button></div></>}
+                  {workflowPanelStep === 5 && <><div className="flex items-start gap-3"><div className="rounded-full bg-emerald-100 p-3 text-emerald-700"><CircleCheck /></div><div><h3 className="font-black">Cooking Completed</h3><p className="mt-1 text-sm text-slate-600">Cooking has been completed successfully.</p></div></div><dl className="mt-4 space-y-1 text-sm"><div><dt className="inline text-slate-500">Order ID: </dt><dd className="inline font-semibold">#{workflowOrder[0]}</dd></div><div><dt className="inline text-slate-500">Total Cooking Time: </dt><dd className="inline font-mono font-semibold">{formatElapsedTime(elapsedProductionTime(workflowOrder))}</dd></div><div><dt className="inline text-slate-500">Meals Cooked: </dt><dd className="inline font-semibold">{workflowOrder[2]}</dd></div></dl><div className="mt-5 flex justify-end gap-2"><button onClick={() => openOrder(workflowOrder)} className="rounded-lg border px-4 py-2 text-xs font-bold">View Details</button><button onClick={() => { setCookingCompletedOrder(null); setPackagingStartOrder(workflowOrder); }} className="rounded-lg bg-purple-600 px-4 py-2 text-xs font-bold text-white">Start Packaging</button></div></>}
+                  {workflowPanelStep === 6 && <><div className="flex items-start gap-3"><div className="rounded-full bg-purple-100 p-3 text-purple-700"><Package /></div><div><h3 className="font-black">Start Packaging</h3><p className="mt-1 text-sm text-slate-600">Are you sure you want to start packaging this order?</p></div></div><dl className="mt-4 space-y-1 text-sm"><div><dt className="inline text-slate-500">Order ID: </dt><dd className="inline font-semibold">#{workflowOrder[0]}</dd></div><div><dt className="inline text-slate-500">Customer: </dt><dd className="inline font-semibold">{workflowOrder[1]}</dd></div><div><dt className="inline text-slate-500">Meals: </dt><dd className="inline font-semibold">{workflowOrder[2]}</dd></div></dl><div className="mt-5 flex justify-end gap-2"><button onClick={() => { setPackagingStartOrder(null); setCookingCompletedOrder(workflowOrder); }} className="rounded-lg border px-4 py-2 text-xs font-bold">Cancel</button><button onClick={() => void confirmPackagingStart()} className="rounded-lg bg-purple-600 px-4 py-2 text-xs font-bold text-white">Start Packaging</button></div></>}
+                </div>
+              </div>
+            )}
+          </aside>
+          </div>
+
+
+          <div className="mt-5 rounded-2xl border border-slate-200 p-4">
+            <h3 className="text-xs font-black uppercase tracking-wide text-slate-800">Production Workflow Overview</h3>
+            <div className="mt-4 flex items-stretch gap-2 overflow-x-auto pb-1">
+              {[
+                [Package, "Packaging", "Initial", "border-purple-200 bg-purple-50 text-purple-700"],
+                [ChefHat, "Start Cooking", "", "border-emerald-200 bg-emerald-50 text-emerald-700"],
+                [Play, "Cooking", "In Progress", "border-blue-200 bg-blue-50 text-blue-700"],
+                [Pause, "Pause / Resume", "If needed", "border-orange-200 bg-orange-50 text-orange-700"],
+                [AlertTriangle, "Stop", "If needed", "border-red-200 bg-red-50 text-red-700"],
+                [CircleCheck, "Complete Cooking", "", "border-emerald-200 bg-emerald-50 text-emerald-700"],
+                [Package, "Start Packaging", "", "border-purple-200 bg-purple-50 text-purple-700"],
+                [Package, "Packaging", "In Progress", "border-purple-200 bg-purple-50 text-purple-700"],
+              ].map(([Icon, label, detail, color], index) => <div key={`${String(label)}-${index}`} className="flex shrink-0 items-center gap-2"><div className={`flex h-20 w-24 flex-col items-center justify-center rounded-lg border p-2 text-center ${String(color)}`}><Icon size={18} /><p className="mt-1 text-[10px] font-black">{String(label)}</p>{detail && <p className="text-[9px]">({String(detail)})</p>}</div>{index < 7 && <span className="font-black text-slate-500">→</span>}</div>)}
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-slate-200 p-4">
+            <h3 className="text-xs font-black uppercase tracking-wide text-slate-800">Status Legend</h3>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+              {[
+                ["Packaging", "Ready for packaging or packaging in progress", "bg-purple-50 text-purple-700"],
+                ["Cooking", "Currently cooking", "bg-blue-50 text-blue-700"],
+                ["Waiting", "Waiting to start production", "bg-orange-50 text-orange-700"],
+                ["Production Completed", "Cooking completed and ready for packaging", "bg-emerald-50 text-emerald-700"],
+                ["Paused", "Cooking paused", "bg-slate-100 text-slate-700"],
+                ["Stopped", "Cooking stopped manually", "bg-red-50 text-red-700"],
+              ].map(([label, detail, color]) => <div key={label} className={`rounded-lg p-3 text-center ${color}`}><p className="text-xs font-black">{label}</p><p className="mt-1 text-[10px] text-slate-700">{detail}</p></div>)}
+            </div>
           </div>
 
         </section>
@@ -1794,7 +1881,7 @@ export default function KitchenPage() {
       {completionOrder && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/70 p-4">
         <div role="dialog" aria-modal="true" aria-labelledby="complete-production-title" className="w-full max-w-lg rounded-3xl bg-white p-7 shadow-2xl">
           <div className="flex items-start justify-between gap-4">
-            <div><p className="text-xs font-bold uppercase tracking-[.2em] text-[#d6a817]">Production Workflow</p><h2 id="complete-production-title" className="mt-1 text-2xl font-bold">Complete Production?</h2></div>
+            <div><p className="text-xs font-bold uppercase tracking-[.2em] text-emerald-700">Production Workflow</p><h2 id="complete-production-title" className="mt-1 text-2xl font-bold">Complete Cooking?</h2></div>
             <button onClick={() => setCompletionOrder(null)} aria-label="Close"><X /></button>
           </div>
           <dl className="mt-6 grid grid-cols-2 gap-3 rounded-2xl bg-slate-50 p-4 text-sm">
@@ -1803,10 +1890,9 @@ export default function KitchenPage() {
             <div><dt className="text-slate-500">Meal Count</dt><dd className="font-bold">{completionOrder[2]}</dd></div>
             <div><dt className="text-slate-500">Current Status</dt><dd className="font-bold">{completionOrder[5]}</dd></div>
           </dl>
-          <p className="mt-6 whitespace-pre-line text-slate-700">{"Completing production will move this order into Packaging.\n\nAre you sure you want to continue?"}</p>
           <div className="mt-7 flex justify-end gap-3">
             <button onClick={() => setCompletionOrder(null)} className="rounded-xl border px-5 py-3 font-bold">Cancel</button>
-            <button onClick={() => { const order=completionOrder; setCompletionOrder(null); void handleProductionAction(order, "complete"); }} className="rounded-xl bg-emerald-600 px-5 py-3 font-bold text-white">Complete Production</button>
+            <button onClick={() => void confirmCookingCompletion()} className="rounded-xl bg-emerald-600 px-5 py-3 font-bold text-white">Complete Cooking</button>
           </div>
         </div>
       </div>}
