@@ -109,6 +109,21 @@ const formatElapsedTime = (seconds: number) => {
     .join(":");
 };
 
+const productionTransitionError = (caught: unknown) => {
+  if (caught instanceof Error && caught.message) return caught.message;
+  if (caught && typeof caught === "object") {
+    const failure = caught as { message?: string; details?: string; hint?: string; code?: string };
+    const message = [
+      failure.message,
+      failure.details && `Details: ${failure.details}`,
+      failure.hint && `Hint: ${failure.hint}`,
+      failure.code && `Code: ${failure.code}`,
+    ].filter(Boolean).join(" ");
+    if (message) return message;
+  }
+  return typeof caught === "string" && caught ? caught : "Production action failed with no error details returned by Supabase.";
+};
+
 const getProductionMetrics = (item: ProductionItem) => {
   const cookedWeight = item.meals * item.portionSize;
   const usableYield = Math.max(1 - item.yieldLoss / 100, 0.01);
@@ -698,7 +713,7 @@ export default function KitchenPage() {
     setSaveMessage("Kitchen production completed.");
   }
 
-  async function runProductionAction(orderId: string, action: "start" | "pause" | "resume" | "stop" | "complete" | "start_packaging", reason?: string) {
+  async function runProductionAction(orderId: string, action: "start" | "pause" | "resume" | "stop" | "complete" | "start_packaging" | "complete_packaging", reason?: string) {
     if (!businessId) throw new Error("Business connection is not ready.");
     const { error } = await supabase.rpc("gbgs_transition_production_order", {
       p_business_id: businessId,
@@ -738,7 +753,7 @@ export default function KitchenPage() {
     }
   }
 
-  async function handleProductionAction(order: string[], action: "start" | "pause" | "resume" | "stop" | "complete" | "start_packaging") {
+  async function handleProductionAction(order: string[], action: "start" | "pause" | "resume" | "stop" | "complete" | "start_packaging" | "complete_packaging") {
     try {
       let reason: string | undefined;
       if (action === "stop") {
@@ -753,21 +768,15 @@ export default function KitchenPage() {
       setProductionActionError(false);
       setProductionActionMessage(`${action[0].toUpperCase()}${action.slice(1)} in progress...`);
       await runProductionAction(order[6], action, reason);
-      const completedLabels = { start: "started", pause: "paused", resume: "resumed", stop: "stopped", complete: "completed", start_packaging: "moved into packaging" } as const;
+      const completedLabels = { start: "started", pause: "paused", resume: "resumed", stop: "stopped", complete: "completed", start_packaging: "moved into packaging", complete_packaging: "completed packaging" } as const;
       setProductionActionMessage(`Production ${completedLabels[action]} successfully.`);
       setRefreshVersion((version) => version + 1);
       return true;
     } catch (caught) {
       setProductionActionError(true);
-      const failure = caught as { message?: string; details?: string; hint?: string; code?: string };
-      const failureMessage = [
-        failure?.message,
-        failure?.details && `Details: ${failure.details}`,
-        failure?.hint && `Hint: ${failure.hint}`,
-        failure?.code && `Code: ${failure.code}`,
-      ].filter(Boolean).join(" ");
-      console.error("Production transition failed", failure);
-      setProductionActionMessage(failureMessage || (caught instanceof Error ? caught.message : "Production action failed."));
+      const failureMessage = productionTransitionError(caught);
+      console.error("Production transition failed:", failureMessage, caught);
+      setProductionActionMessage(failureMessage);
       return false;
     }
   }
@@ -812,21 +821,11 @@ export default function KitchenPage() {
   }
 
   async function confirmPackagingCompletion() {
-    if (!packagingCompletionOrder || !businessId) return;
+    if (!packagingCompletionOrder) return;
     const order = packagingCompletionOrder;
-    try {
-      setProductionActionError(false);
-      setProductionActionMessage("Completing packaging...");
-      const { error } = await supabase.rpc("gbgs_complete_packaging", { p_business_id: businessId, p_order_id: order[6] });
-      if (error) throw error;
-      setPackagingCompletionOrder(null);
-      setActiveWorkflowOrder(order.map((value, index) => index === 5 ? "Completed" : value));
-      setProductionActionMessage("Packaging completed successfully.");
-      setRefreshVersion((version) => version + 1);
-    } catch (caught) {
-      setProductionActionError(true);
-      setProductionActionMessage(caught instanceof Error ? caught.message : "Packaging could not be completed.");
-    }
+    const completed = await handleProductionAction(order, "complete_packaging");
+    if (!completed) return;
+    setPackagingCompletionOrder(null);
   }
 
   async function reopenProduction() {
