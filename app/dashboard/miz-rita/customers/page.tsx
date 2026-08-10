@@ -75,16 +75,6 @@ type CustomerForm = ProfileMetadata & {
   tags: string[];
 };
 
-type NewOrderForm = {
-  mealPlan: string;
-  mealCount: string;
-  method: string;
-  fulfillmentDate: string;
-  pickupTime: string;
-  subtotal: string;
-  notes: string;
-};
-
 const emptyMetadata: ProfileMetadata = {
   dietaryRestrictions: "",
   foodAllergies: "",
@@ -118,16 +108,6 @@ export default function CustomersPage() {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [customerForm, setCustomerForm] = useState<CustomerForm | null>(null);
-  const [newOrderCustomer, setNewOrderCustomer] = useState<Customer | null>(null);
-  const [newOrderForm, setNewOrderForm] = useState<NewOrderForm>({
-    mealPlan: "",
-    mealCount: "",
-    method: "Pickup",
-    fulfillmentDate: "",
-    pickupTime: "",
-    subtotal: "",
-    notes: "",
-  });
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState("");
 
@@ -418,56 +398,6 @@ export default function CustomersPage() {
     setSaving(false);
   };
 
-  const createOrder = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!newOrderCustomer) return;
-    setSaving(true);
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    if (userError || !user) {
-      setError(userError?.message || "You must be signed in.");
-      setSaving(false);
-      return;
-    }
-    const subtotal = Number(newOrderForm.subtotal) || 0;
-    const now = new Date();
-    const { data: meal, error: mealError } = await supabase.from("gbgs_menu_meals").select("id").eq("business_id", businessId).ilike("name", newOrderForm.mealPlan.trim()).maybeSingle();
-    if (mealError || !meal) {
-      setError(mealError?.message ?? "Select a meal that exists in Menu HQ.");
-      setSaving(false);
-      return;
-    }
-    const orderNumber = `MR-${now.toISOString().replace(/\D/g, "").slice(0, 14)}`;
-    const { error: insertError } = await supabase.rpc("gbgs_create_order", {
-      p_business_id: businessId,
-      p_created_by: user.id,
-      p_customer_id: newOrderCustomer.id,
-      p_meal_id: meal.id,
-      p_values: {
-      order_number: orderNumber,
-      order_date: now.toISOString().slice(0, 10),
-      fulfillment_date: newOrderForm.fulfillmentDate || null,
-      meal_count: Math.max(1, Math.floor(Number(newOrderForm.mealCount))),
-      order_status: "New Order",
-      payment_status: "Unpaid",
-      delivery_method: newOrderForm.method,
-      subtotal,
-      delivery_fee: 0,
-      discount: 0,
-      total: subtotal,
-      notes: buildOrderNotes(newOrderForm),
-      },
-      p_payment_amount: 0,
-    });
-    if (insertError) setError(insertError.message);
-    else {
-      setToast("Order created");
-      setNewOrderCustomer(null);
-      setNewOrderForm({ mealPlan: "", mealCount: "", method: "Pickup", fulfillmentDate: "", pickupTime: "", subtotal: "", notes: "" });
-      await loadData();
-    }
-    setSaving(false);
-  };
-
   const deleteCustomer = async (customer: Customer) => {
     const customerOrders = ordersByCustomer.get(customer.id) ?? [];
     if (customerOrders.length) {
@@ -543,7 +473,7 @@ export default function CustomersPage() {
         internalNotes={crmNotes[selectedCustomer.id] ?? ""}
         saving={saving}
         onClose={() => setSelectedCustomer(null)}
-        onNewOrder={() => setNewOrderCustomer(selectedCustomer)}
+        onNewOrder={() => { window.location.href = `/dashboard/miz-rita/orders?newOrder=1&customerId=${encodeURIComponent(selectedCustomer.id)}`; }}
         onEdit={() => openEdit(selectedCustomer)}
         onSubscription={(action) => void setSubscription(selectedCustomer, action)}
         onPayment={() => void recordPayment(selectedCustomer)}
@@ -551,8 +481,6 @@ export default function CustomersPage() {
       /> : null}
 
       {editingCustomer && customerForm ? <CustomerEditModal form={customerForm} saving={saving} onChange={setCustomerForm} onClose={() => { setEditingCustomer(null); setCustomerForm(null); }} onSave={saveCustomer} /> : null}
-      {newOrderCustomer ? <NewOrderModal customer={newOrderCustomer} form={newOrderForm} saving={saving} onChange={setNewOrderForm} onClose={() => setNewOrderCustomer(null)} onSave={createOrder} /> : null}
-
       {toast ? <div className="fixed bottom-6 right-6 z-[90] flex items-center gap-3 rounded-2xl bg-[#081c35] px-5 py-4 font-bold text-white shadow-2xl"><CheckCircle2 className="h-5 w-5 text-[#d6a817]" />{toast}</div> : null}
     </main>
   );
@@ -640,20 +568,6 @@ function CustomerEditModal({ form, saving, onChange, onClose, onSave }: { form: 
     <Field label="Internal Staff Notes"><textarea value={form.internalNotes} onChange={(event) => field("internalNotes", event.target.value)} className="customer-input" /></Field>
     <section className="sm:col-span-2"><p className="mb-2 text-sm font-bold">Customer Tags</p><div className="flex flex-wrap gap-2">{form.tags.map((tag) => <button key={tag} type="button" onClick={() => removeTag(tag)} className="rounded-full bg-[#081c35] px-3 py-1.5 text-xs font-bold text-white">{tag} <X className="ml-1 inline h-3 w-3" /></button>)}</div><div className="mt-3 flex flex-wrap gap-2">{defaultCustomerTags.filter((tag) => !form.tags.some((item) => item.toLowerCase() === tag.toLowerCase())).map((tag) => <button key={tag} type="button" onClick={() => addTag(tag)} className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700">+ {tag}</button>)}</div><div className="mt-3 flex gap-2"><input value={customTag} onChange={(event) => setCustomTag(event.target.value)} placeholder="Add custom tag" className="customer-input" /><button type="button" onClick={() => addTag(customTag)} className="rounded-xl border px-4 py-2 font-bold">Add Tag</button></div></section>
     <div className="flex justify-end gap-2 sm:col-span-2"><button type="button" onClick={onClose} className="rounded-xl border px-5 py-3 font-bold">Cancel</button><button disabled={saving} className="rounded-xl bg-[#d6a817] px-5 py-3 font-bold text-[#081c35] disabled:opacity-50">{saving ? "Saving..." : "Save Customer"}</button></div>
-  </form></Modal>;
-}
-
-function NewOrderModal({ customer, form, saving, onChange, onClose, onSave }: { customer: Customer; form: NewOrderForm; saving: boolean; onChange: (form: NewOrderForm) => void; onClose: () => void; onSave: (event: FormEvent) => void }) {
-  const field = (key: keyof NewOrderForm, value: string) => onChange({ ...form, [key]: value });
-  return <Modal title={`New Order · ${customer.first_name}`} onClose={onClose}><form onSubmit={onSave} className="grid gap-4 sm:grid-cols-2">
-    <Field label="Meal Plan"><input required value={form.mealPlan} onChange={(event) => field("mealPlan", event.target.value)} className="customer-input" /></Field>
-    <Field label="Meal Count"><input required type="number" min="1" value={form.mealCount} onChange={(event) => field("mealCount", event.target.value)} className="customer-input" /></Field>
-    <Field label="Pickup / Delivery"><select value={form.method} onChange={(event) => field("method", event.target.value)} className="customer-input"><option>Pickup</option><option>Delivery</option></select></Field>
-    <Field label="Fulfillment Date"><input required type="date" value={form.fulfillmentDate} onChange={(event) => field("fulfillmentDate", event.target.value)} className="customer-input" /></Field>
-    <Field label="Pickup Time"><input type="time" value={form.pickupTime} onChange={(event) => field("pickupTime", event.target.value)} className="customer-input" /></Field>
-    <Field label="Subtotal"><input required type="number" min="0" step="0.01" value={form.subtotal} onChange={(event) => field("subtotal", event.target.value)} className="customer-input" /></Field>
-    <div className="sm:col-span-2"><Field label="Internal Notes"><textarea rows={3} value={form.notes} onChange={(event) => field("notes", event.target.value)} className="customer-input" /></Field></div>
-    <div className="flex justify-end gap-2 sm:col-span-2"><button type="button" onClick={onClose} className="rounded-xl border px-5 py-3 font-bold">Cancel</button><button disabled={saving} className="rounded-xl bg-[#d6a817] px-5 py-3 font-bold text-[#081c35] disabled:opacity-50">{saving ? "Creating..." : "Create Order"}</button></div>
   </form></Modal>;
 }
 
@@ -747,11 +661,6 @@ function buildMetadata(form: CustomerForm) {
 function parseOrder(notes: string | null) {
   const text = notes || "";
   return { mealPlan: text.match(/^Meal Plan:\s*(.+)$/im)?.[1]?.trim() || "Not specified" };
-}
-
-function buildOrderNotes(form: NewOrderForm) {
-  const metadata = [`Pickup/Delivery Date: ${form.fulfillmentDate}`, `Pickup/Delivery Time: ${form.pickupTime || "Not scheduled"}`];
-  return form.notes.trim() ? `${metadata.join("\n")}\n\nNotes:\n${form.notes.trim()}` : metadata.join("\n");
 }
 
 function printCustomer(customer: Customer, orders: Order[], metadata: ProfileMetadata, internalNotes: string) {

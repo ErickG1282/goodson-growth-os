@@ -132,6 +132,12 @@ export default function OrdersPage() {
   const [events, setEvents] = useState<Record<string, WorkflowEvent[]>>({});
   const [newOrderForm, setNewOrderForm] = useState<NewOrderForm | null>(null);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("newOrder") !== "1") return;
+    setNewOrderForm({ ...emptyNewOrderForm, customerId: params.get("customerId") ?? "" });
+  }, []);
+
   const loadOrders = useCallback(async () => {
     setError("");
     try {

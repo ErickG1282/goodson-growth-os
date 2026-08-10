@@ -581,9 +581,6 @@ export default function KitchenPage() {
   const workflowStatus = workflowOrder?.[5] ?? "";
   const workflowIsComplete = ["Ready For Pickup", "Ready For Delivery", "Completed", "Complete"].includes(workflowStatus);
   const completedItems = kitchenTotals.statuses.Complete;
-  const overallProgress = productionCalculator.length
-    ? Math.round((completedItems / productionCalculator.length) * 100)
-    : 0;
   const productionDate = new Intl.DateTimeFormat("en-US", {
     month: "long",
     day: "numeric",
@@ -595,12 +592,30 @@ export default function KitchenPage() {
   }).format(new Date(Date.now() + kitchenTotals.productionMinutes * 60_000));
   const productionNumber = `MR-${new Date().toLocaleDateString("en-CA").replaceAll("-", "")}-${liveKitchenOrders.length}`;
   const assignedKitchenTeam = Array.from(new Set(productionCalculator.map((item) => item.assignedCook.trim()).filter(Boolean))).join(", ");
-  const productionQueue = productionCalculator.map((item) => ({
-    meal: item.name,
-    meals: item.meals,
-    progress: item.status === "Complete" ? 100 : item.status === "Packaging" ? 80 : item.status === "Cooking" ? 60 : item.status === "Prep" ? 30 : 0,
-    status: item.status,
-  }));
+  const productionQueue = liveKitchenOrders.map((order) => {
+    const status = order[5];
+    const progress = ["Ready For Pickup", "Ready For Delivery", "Completed", "Complete"].includes(status)
+      ? 100
+      : status === "Packaging"
+        ? 80
+        : status === "Awaiting Packaging"
+          ? 70
+          : ["Cooking", "Paused", "Stopped"].includes(status)
+            ? 50
+            : 0;
+    return {
+      id: order[6],
+      meal: `#${order[0]} — ${order[1]}`,
+      meals: Number(order[7]) || 0,
+      progress,
+      status: status === "Awaiting Packaging" ? "Cooking Completed" : status,
+      order,
+    };
+  });
+  const scheduledMeals = productionQueue.reduce((sum, item) => sum + item.meals, 0);
+  const overallProgress = scheduledMeals
+    ? Math.round(productionQueue.reduce((sum, item) => sum + item.progress * item.meals, 0) / scheduledMeals)
+    : 0;
   const quickStats = [
     { title: "Meals To Cook", value: String(queueTotalMeals), icon: ChefHat, color: "bg-blue-100 text-blue-700" },
     { title: "Meals Cooking", value: String(mealsCooking), icon: Play, color: "bg-blue-100 text-blue-700" },
@@ -1051,8 +1066,8 @@ export default function KitchenPage() {
               {productionQueue.map((item) => (
 
                 <div
-                  key={item.meal}
-                  onClick={() => openMeal(item)}
+                  key={item.id}
+                  onClick={() => openOrder(item.order)}
                   className="cursor-pointer rounded-2xl p-3 transition hover:bg-slate-50"
                 >
 

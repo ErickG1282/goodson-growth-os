@@ -7,15 +7,15 @@ import { NotificationBell } from "@/components/miz-rita/notification-bell";
 
 const tabs = [
   { name: "Dashboard", href: "/dashboard/miz-rita", enabled: true },
-  { name: "Kitchen", href: "/dashboard/miz-rita/kitchen", enabled: true },
-  { name: "Orders", href: "/dashboard/miz-rita/orders", enabled: true },
   { name: "Customers", href: "/dashboard/miz-rita/customers", enabled: true },
   { name: "Menu", href: "/dashboard/miz-rita/menu", enabled: true },
+  { name: "Orders", href: "/dashboard/miz-rita/orders", enabled: true },
+  { name: "Kitchen", href: "/dashboard/miz-rita/kitchen", enabled: true },
   { name: "Deliveries", href: "/dashboard/miz-rita/deliveries", enabled: true },
-  { name: "Payments", href: "/dashboard/miz-rita/payments", enabled: true },
   { name: "Inventory", href: "/dashboard/miz-rita/inventory", enabled: true },
-  { name: "Calendar", href: "/dashboard/miz-rita/calendar", enabled: true },
+  { name: "Payments", href: "/dashboard/miz-rita/payments", enabled: true },
   { name: "Notifications", href: "/dashboard/miz-rita/notifications", enabled: true },
+  { name: "Calendar", href: "/dashboard/miz-rita/calendar", enabled: true },
   { name: "Reports", href: "/dashboard/miz-rita/reports", enabled: true },
 ];
 
