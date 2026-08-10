@@ -744,7 +744,15 @@ export default function KitchenPage() {
       return true;
     } catch (caught) {
       setProductionActionError(true);
-      setProductionActionMessage(caught instanceof Error ? caught.message : "Production action failed.");
+      const failure = caught as { message?: string; details?: string; hint?: string; code?: string };
+      const failureMessage = [
+        failure?.message,
+        failure?.details && `Details: ${failure.details}`,
+        failure?.hint && `Hint: ${failure.hint}`,
+        failure?.code && `Code: ${failure.code}`,
+      ].filter(Boolean).join(" ");
+      console.error("Production transition failed", failure);
+      setProductionActionMessage(failureMessage || (caught instanceof Error ? caught.message : "Production action failed."));
       return false;
     }
   }
@@ -1375,7 +1383,7 @@ export default function KitchenPage() {
 
           <aside className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4 xl:sticky xl:top-4">
             {!workflowOrder ? <div className="py-16 text-center"><ChefHat className="mx-auto text-slate-400" size={36} /><h3 className="mt-3 font-black text-slate-800">Select an order</h3><p className="mt-1 text-sm text-slate-500">Use a row checkbox to load its workflow controls.</p></div> : <>
-              <div className="border-b border-slate-200 pb-4"><div className="flex items-start justify-between"><div><p className="text-xs font-bold text-slate-500">Selected Order</p><h3 className="mt-1 text-2xl font-black">#{workflowOrder[0]}</h3></div><button onClick={() => { setActiveWorkflowOrder(null); setSelectedProductionOrders(new Set()); }} aria-label="Clear selected order"><X size={18} /></button></div><div className="mt-3 flex flex-wrap gap-4 text-sm"><span>{workflowOrder[1]}</span><span>{workflowOrder[2]}</span><span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">{workflowStatus === "Awaiting Packaging" ? "Cooking Completed" : workflowStatus}</span></div></div>
+              <div className="border-b border-slate-200 pb-4"><div className="flex items-start justify-between"><div><p className="text-xs font-bold text-slate-500">Selected Order</p><h3 className="mt-1 text-2xl font-black">{workflowOrder[1]}</h3></div><button onClick={() => { setActiveWorkflowOrder(null); setSelectedProductionOrders(new Set()); }} aria-label="Clear selected order"><X size={18} /></button></div><div className="mt-3 flex flex-wrap gap-4 text-sm"><span>#{workflowOrder[0]}</span><span>{workflowOrder[2]}</span><span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">{workflowStatus === "Awaiting Packaging" ? "Cooking Completed" : workflowStatus}</span></div></div>
               <div className="mt-4 space-y-3">
                 {([
                   [ChefHat,"Start Cooking","Start the cooking process for this order.","Start Cooking","border-emerald-300 bg-emerald-50 text-emerald-700",workflowStatus === "Waiting",() => setStartOrder(workflowOrder)],
