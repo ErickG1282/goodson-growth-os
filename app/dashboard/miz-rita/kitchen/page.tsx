@@ -169,6 +169,7 @@ export default function KitchenPage() {
   const [completionOrder, setCompletionOrder] = useState<string[] | null>(null);
   const [cookingCompletedOrder, setCookingCompletedOrder] = useState<string[] | null>(null);
   const [packagingStartOrder, setPackagingStartOrder] = useState<string[] | null>(null);
+  const [packagingCompletionOrder, setPackagingCompletionOrder] = useState<string[] | null>(null);
   const [activeWorkflowOrder, setActiveWorkflowOrder] = useState<string[] | null>(null);
   const [reopenOrder, setReopenOrder] = useState<string[] | null>(null);
   const [reopenReason, setReopenReason] = useState("");
@@ -577,6 +578,8 @@ export default function KitchenPage() {
         : ["Paused", "Stopped"].includes(workflowOrder?.[5] ?? "") ? 3
           : workflowOrder?.[5] === "Cooking" ? 2
             : 1;
+  const workflowStatus = workflowOrder?.[5] ?? "";
+  const workflowIsComplete = ["Ready For Pickup", "Ready For Delivery", "Completed", "Complete"].includes(workflowStatus);
   const completedItems = kitchenTotals.statuses.Complete;
   const overallProgress = productionCalculator.length
     ? Math.round((completedItems / productionCalculator.length) * 100)
@@ -772,6 +775,35 @@ export default function KitchenPage() {
     const succeeded = await handleProductionAction(order, action);
     if (!succeeded) return;
     setActiveWorkflowOrder(order.map((value, index) => index === 5 ? (action === "pause" ? "Paused" : "Cooking") : value));
+  }
+
+  function selectWorkflowOrder(order: string[]) {
+    setStartOrder(null);
+    setStopOrder(null);
+    setCompletionOrder(null);
+    setCookingCompletedOrder(null);
+    setPackagingStartOrder(null);
+    setPackagingCompletionOrder(null);
+    setSelectedProductionOrders(order[5] === "Waiting" ? new Set([order[6]]) : new Set());
+    setActiveWorkflowOrder(order);
+  }
+
+  async function confirmPackagingCompletion() {
+    if (!packagingCompletionOrder || !businessId) return;
+    const order = packagingCompletionOrder;
+    try {
+      setProductionActionError(false);
+      setProductionActionMessage("Completing packaging...");
+      const { error } = await supabase.rpc("gbgs_complete_packaging", { p_business_id: businessId, p_order_id: order[6] });
+      if (error) throw error;
+      setPackagingCompletionOrder(null);
+      setActiveWorkflowOrder(order.map((value, index) => index === 5 ? "Completed" : value));
+      setProductionActionMessage("Packaging completed successfully.");
+      setRefreshVersion((version) => version + 1);
+    } catch (caught) {
+      setProductionActionError(true);
+      setProductionActionMessage(caught instanceof Error ? caught.message : "Packaging could not be completed.");
+    }
   }
 
   async function reopenProduction() {
@@ -1238,10 +1270,10 @@ export default function KitchenPage() {
             <button type="button" onClick={() => setSelectedProductionOrders(new Set())} className="rounded-lg border px-4 py-2 text-sm font-bold">Clear Selection</button>
           </div>
 
-          <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(390px,2fr)]">
-          <div className="overflow-x-auto rounded-2xl border">
+          <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(360px,1fr)]">
+          <div className="w-full overflow-x-auto rounded-2xl border">
 
-            <table className="min-w-[760px] text-xs [&_td]:!px-2 [&_th]:!px-2">
+            <table className="w-full min-w-[760px] text-xs [&_td]:!px-2 [&_th]:!px-2">
 
               <thead className="bg-slate-100">
 
@@ -1282,12 +1314,12 @@ export default function KitchenPage() {
                 {liveKitchenOrders.map((order) => (
                   <tr
                     key={order[0]}
-                    onClick={() => openOrder(order)}
-                    className="border-t cursor-pointer hover:bg-slate-100 transition"
+                    onClick={() => selectWorkflowOrder(order)}
+                    className={`border-t cursor-pointer transition hover:bg-slate-100 ${activeWorkflowOrder?.[6] === order[6] ? "bg-blue-50 ring-1 ring-inset ring-blue-200" : ""}`}
                   >
 
                     <td className="px-3 py-4" onClick={(event) => event.stopPropagation()}>
-                      <input type="checkbox" aria-label={`Select order ${order[0]}`} disabled={order[5] !== "Waiting"} checked={selectedProductionOrders.has(order[6])} onChange={(event) => setSelectedProductionOrders((current) => { const next = new Set(current); if (event.target.checked) next.add(order[6]); else next.delete(order[6]); return next; })} />
+                      <input type="checkbox" aria-label={`Select order ${order[0]}`} checked={activeWorkflowOrder?.[6] === order[6] || selectedProductionOrders.has(order[6])} onChange={(event) => { if (event.target.checked) { selectWorkflowOrder(order); if (order[5] === "Waiting") setSelectedProductionOrders((current) => new Set([...current, order[6]])); } else { if (activeWorkflowOrder?.[6] === order[6]) setActiveWorkflowOrder(null); setSelectedProductionOrders((current) => { const next=new Set(current); next.delete(order[6]); return next; }); } }} />
                     </td>
 
                     <td className="px-5 py-4 font-semibold">
@@ -1329,16 +1361,7 @@ export default function KitchenPage() {
                     <td className="px-5 py-4">{order[5] === "Paused" ? "Cooking Paused" : order[5] === "Awaiting Packaging" ? "Cooking Completed" : order[5]}</td>
                     <td className="px-5 py-4 text-slate-500">Unassigned</td>
                     <td className="px-5 py-4" onClick={(event) => event.stopPropagation()}>
-                      <div className="flex flex-nowrap items-center gap-2">
-                        {order[5] === "Waiting" && <button onClick={() => { setActiveWorkflowOrder(order); setStartOrder(order); }} className="whitespace-nowrap rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white">Start Cooking</button>}
-                        {order[5] === "Cooking" && <button onClick={() => void runWorkflowPanelAction(order, "pause")} className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-white">Pause</button>}
-                        {["Paused", "Stopped"].includes(order[5]) && <button onClick={() => void runWorkflowPanelAction(order, "resume")} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white">Resume</button>}
-                        {["Cooking", "Paused"].includes(order[5]) && <button onClick={() => { setActiveWorkflowOrder(order); setStopOrder(order); }} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white">Stop</button>}
-                        {["Cooking", "Paused"].includes(order[5]) && <button onClick={() => { setActiveWorkflowOrder(order); setCompletionOrder(order); }} className="whitespace-nowrap rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white">Complete Cooking</button>}
-                        {order[5] === "Awaiting Packaging" && <button onClick={() => { setActiveWorkflowOrder(order); setCookingCompletedOrder(order); }} className="whitespace-nowrap rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-bold text-white">Start Packaging</button>}
-                        {order[5] === "Awaiting Packaging" && canReopenProduction && <div className="rounded-lg border border-slate-200 p-2"><p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Manager Actions</p><button onClick={() => { setReopenOrder(order); setReopenReason(""); }} className="rounded-lg bg-[#081c35] px-3 py-1.5 text-xs font-bold text-white">Reopen Production</button></div>}
-                        {order[5] === "Packaging" && <div className="rounded-lg bg-purple-50 px-3 py-1.5 text-xs font-bold text-purple-700">Packaging In Progress</div>}
-                      </div>
+                      <span className={`whitespace-nowrap rounded-full px-3 py-1.5 text-[10px] font-black ${order[5] === "Cooking" ? "bg-blue-100 text-blue-700" : order[5] === "Paused" ? "bg-orange-100 text-orange-700" : order[5] === "Stopped" ? "bg-red-100 text-red-700" : order[5] === "Awaiting Packaging" ? "bg-emerald-100 text-emerald-700" : order[5] === "Packaging" ? "bg-purple-100 text-purple-700" : ["Ready For Pickup", "Ready For Delivery", "Completed"].includes(order[5]) ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-700"}`}>{order[5] === "Cooking" ? "Cooking In Progress" : order[5] === "Paused" ? "Cooking Paused" : order[5] === "Stopped" ? "Cooking Stopped" : order[5] === "Awaiting Packaging" ? "Cooking Completed" : order[5] === "Packaging" ? "Packaging In Progress" : ["Ready For Pickup", "Ready For Delivery", "Completed"].includes(order[5]) ? "Packaging Completed" : "Waiting to Start"}</span>
                     </td>
 
                   </tr>
@@ -1350,20 +1373,21 @@ export default function KitchenPage() {
 
           </div>
 
-          <aside className="xl:sticky xl:top-4">
-            {!workflowOrder ? <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-8 text-center"><ChefHat className="mx-auto text-slate-400" size={34} /><h3 className="mt-3 font-black text-slate-800">Select an order action</h3><p className="mt-1 text-sm text-slate-500">Choose an action in the production table to load that order&apos;s workflow here.</p></div> : (
-              <div className={`grid grid-cols-[105px_minmax(0,1fr)] overflow-hidden rounded-2xl border-2 ${workflowPanelStep === 2 ? "border-blue-500 bg-blue-50/40" : workflowPanelStep === 3 ? "border-orange-400 bg-orange-50/40" : workflowPanelStep === 4 ? "border-red-400 bg-red-50/40" : workflowPanelStep === 6 ? "border-purple-400 bg-purple-50/40" : "border-emerald-500 bg-emerald-50/40"}`}>
-                <div className={`flex flex-col items-center justify-center p-4 text-center ${workflowPanelStep === 2 ? "text-blue-700" : workflowPanelStep === 3 ? "text-orange-600" : workflowPanelStep === 4 ? "text-red-600" : workflowPanelStep === 6 ? "text-purple-700" : "text-emerald-700"}`}><span className="flex h-7 w-7 items-center justify-center rounded-md bg-current text-sm font-black text-white"><span className="text-white">{workflowPanelStep}</span></span><p className="mt-3 text-xs font-black uppercase leading-tight">{workflowPanelStep === 1 ? "Start Cooking" : workflowPanelStep === 2 ? "Cooking In Progress" : workflowPanelStep === 3 ? "Cooking Paused" : workflowPanelStep === 4 ? "Stop Cooking" : workflowPanelStep === 5 ? "Cooking Completed" : "Start Packaging"}</p></div>
-                <div className="m-2 rounded-xl border border-slate-200 bg-white p-5 shadow-md">
-                  {workflowPanelStep === 1 && <><div className="flex items-start gap-3"><div className="rounded-full bg-emerald-100 p-3 text-emerald-700"><ChefHat /></div><div><h3 className="font-black">Start Cooking</h3><p className="mt-1 text-sm text-slate-600">Are you sure you want to start cooking this order?</p></div></div><dl className="mt-4 space-y-1 text-sm"><div><dt className="inline text-slate-500">Order ID: </dt><dd className="inline font-semibold">#{workflowOrder[0]}</dd></div><div><dt className="inline text-slate-500">Customer: </dt><dd className="inline font-semibold">{workflowOrder[1]}</dd></div><div><dt className="inline text-slate-500">Meals: </dt><dd className="inline font-semibold">{workflowOrder[2]}</dd></div></dl><div className="mt-5 flex justify-end gap-2"><button onClick={() => { setStartOrder(null); setActiveWorkflowOrder(null); }} className="rounded-lg border px-4 py-2 text-xs font-bold">Cancel</button><button onClick={() => { const order=workflowOrder; setStartOrder(null); void handleProductionAction(order,"start").then((ok) => { if(ok)setActiveWorkflowOrder(order.map((value,index)=>index===5?"Cooking":value)); }); }} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white">Start Cooking</button></div></>}
-                  {workflowPanelStep === 2 && <><div className="flex items-start gap-3"><div className="rounded-full bg-blue-100 p-3 text-blue-700"><ChefHat /></div><div><h3 className="font-black">Cooking in Progress</h3><p className="mt-1 text-sm text-slate-600">Order is currently being cooked.</p></div></div><dl className="mt-4 space-y-1 text-sm"><div><dt className="inline text-slate-500">Order ID: </dt><dd className="inline font-semibold">#{workflowOrder[0]}</dd></div><div><dt className="inline text-slate-500">Elapsed Time: </dt><dd className="inline font-mono font-semibold">{formatElapsedTime(elapsedProductionTime(workflowOrder))}</dd></div></dl><div className="mt-5 flex flex-wrap justify-end gap-2"><button onClick={() => void runWorkflowPanelAction(workflowOrder,"pause")} className="rounded-lg bg-amber-500 px-4 py-2 text-xs font-bold text-white">Pause</button><button onClick={() => setStopOrder(workflowOrder)} className="rounded-lg bg-red-600 px-4 py-2 text-xs font-bold text-white">Stop</button><button onClick={() => setCompletionOrder(workflowOrder)} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white">Complete Cooking</button></div></>}
-                  {workflowPanelStep === 3 && <><div className="flex items-start gap-3"><div className="rounded-full bg-orange-100 p-3 text-orange-600"><Pause /></div><div><h3 className="font-black">Cooking Paused</h3><p className="mt-1 text-sm text-slate-600">Cooking has been paused.</p></div></div><dl className="mt-4 space-y-1 text-sm"><div><dt className="inline text-slate-500">Order ID: </dt><dd className="inline font-semibold">#{workflowOrder[0]}</dd></div><div><dt className="inline text-slate-500">Paused Time: </dt><dd className="inline font-mono font-semibold">{formatElapsedTime(elapsedProductionTime(workflowOrder))}</dd></div></dl><div className="mt-5 flex flex-wrap justify-end gap-2"><button onClick={() => void runWorkflowPanelAction(workflowOrder,"resume")} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white">Resume</button>{workflowOrder[5] !== "Stopped" && <button onClick={() => setStopOrder(workflowOrder)} className="rounded-lg bg-red-600 px-4 py-2 text-xs font-bold text-white">Stop</button>}<button onClick={() => setCompletionOrder(workflowOrder)} disabled={workflowOrder[5] === "Stopped"} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-40">Complete Cooking</button></div></>}
-                  {workflowPanelStep === 4 && <><div className="flex items-start gap-3"><div className="rounded-full bg-red-100 p-3 text-red-700"><AlertTriangle /></div><div><h3 className="font-black">Stop Cooking</h3><p className="mt-1 text-sm text-slate-600">Are you sure you want to stop cooking this order?</p><p className="text-sm text-slate-600">This will stop the cooking process.</p></div></div><dl className="mt-4 space-y-1 text-sm"><div><dt className="inline text-slate-500">Order ID: </dt><dd className="inline font-semibold">#{workflowOrder[0]}</dd></div><div><dt className="inline text-slate-500">Elapsed Time: </dt><dd className="inline font-mono font-semibold">{formatElapsedTime(elapsedProductionTime(workflowOrder))}</dd></div></dl><div className="mt-5 flex justify-end gap-2"><button onClick={() => setStopOrder(null)} className="rounded-lg border px-4 py-2 text-xs font-bold">Cancel</button><button onClick={() => { const order=workflowOrder; setStopOrder(null); void handleProductionAction(order,"stop").then((ok)=>{if(ok)setActiveWorkflowOrder(order.map((value,index)=>index===5?"Stopped":value));}); }} className="rounded-lg bg-red-600 px-4 py-2 text-xs font-bold text-white">Stop Cooking</button></div></>}
-                  {workflowPanelStep === 5 && <><div className="flex items-start gap-3"><div className="rounded-full bg-emerald-100 p-3 text-emerald-700"><CircleCheck /></div><div><h3 className="font-black">Cooking Completed</h3><p className="mt-1 text-sm text-slate-600">Cooking has been completed successfully.</p></div></div><dl className="mt-4 space-y-1 text-sm"><div><dt className="inline text-slate-500">Order ID: </dt><dd className="inline font-semibold">#{workflowOrder[0]}</dd></div><div><dt className="inline text-slate-500">Total Cooking Time: </dt><dd className="inline font-mono font-semibold">{formatElapsedTime(elapsedProductionTime(workflowOrder))}</dd></div><div><dt className="inline text-slate-500">Meals Cooked: </dt><dd className="inline font-semibold">{workflowOrder[2]}</dd></div></dl><div className="mt-5 flex justify-end gap-2"><button onClick={() => openOrder(workflowOrder)} className="rounded-lg border px-4 py-2 text-xs font-bold">View Details</button><button onClick={() => { setCookingCompletedOrder(null); setPackagingStartOrder(workflowOrder); }} className="rounded-lg bg-purple-600 px-4 py-2 text-xs font-bold text-white">Start Packaging</button></div></>}
-                  {workflowPanelStep === 6 && <><div className="flex items-start gap-3"><div className="rounded-full bg-purple-100 p-3 text-purple-700"><Package /></div><div><h3 className="font-black">Start Packaging</h3><p className="mt-1 text-sm text-slate-600">Are you sure you want to start packaging this order?</p></div></div><dl className="mt-4 space-y-1 text-sm"><div><dt className="inline text-slate-500">Order ID: </dt><dd className="inline font-semibold">#{workflowOrder[0]}</dd></div><div><dt className="inline text-slate-500">Customer: </dt><dd className="inline font-semibold">{workflowOrder[1]}</dd></div><div><dt className="inline text-slate-500">Meals: </dt><dd className="inline font-semibold">{workflowOrder[2]}</dd></div></dl><div className="mt-5 flex justify-end gap-2"><button onClick={() => { setPackagingStartOrder(null); setCookingCompletedOrder(workflowOrder); }} className="rounded-lg border px-4 py-2 text-xs font-bold">Cancel</button><button onClick={() => void confirmPackagingStart()} className="rounded-lg bg-purple-600 px-4 py-2 text-xs font-bold text-white">Start Packaging</button></div></>}
-                </div>
+          <aside className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4 xl:sticky xl:top-4">
+            {!workflowOrder ? <div className="py-16 text-center"><ChefHat className="mx-auto text-slate-400" size={36} /><h3 className="mt-3 font-black text-slate-800">Select an order</h3><p className="mt-1 text-sm text-slate-500">Use a row checkbox to load its workflow controls.</p></div> : <>
+              <div className="border-b border-slate-200 pb-4"><div className="flex items-start justify-between"><div><p className="text-xs font-bold text-slate-500">Selected Order</p><h3 className="mt-1 text-2xl font-black">#{workflowOrder[0]}</h3></div><button onClick={() => { setActiveWorkflowOrder(null); setSelectedProductionOrders(new Set()); }} aria-label="Clear selected order"><X size={18} /></button></div><div className="mt-3 flex flex-wrap gap-4 text-sm"><span>{workflowOrder[1]}</span><span>{workflowOrder[2]}</span><span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">{workflowStatus === "Awaiting Packaging" ? "Cooking Completed" : workflowStatus}</span></div></div>
+              <div className="mt-4 space-y-3">
+                {([
+                  [ChefHat,"Start Cooking","Start the cooking process for this order.","Start Cooking","border-emerald-300 bg-emerald-50 text-emerald-700",workflowStatus === "Waiting",() => setStartOrder(workflowOrder)],
+                  [Pause,workflowStatus === "Paused" || workflowStatus === "Stopped" ? "Resume" : "Pause","Temporarily pause the cooking process.",workflowStatus === "Paused" || workflowStatus === "Stopped" ? "Resume" : "Pause","border-orange-300 bg-orange-50 text-orange-700",["Cooking","Paused","Stopped"].includes(workflowStatus),() => void runWorkflowPanelAction(workflowOrder,workflowStatus === "Cooking" ? "pause" : "resume")],
+                  [AlertTriangle,"Stop","Stop the cooking process.","Stop","border-red-300 bg-red-50 text-red-700",["Cooking","Paused"].includes(workflowStatus),() => setStopOrder(workflowOrder)],
+                  [CircleCheck,"Complete Cooking","Mark cooking as completed.","Complete Cooking","border-emerald-300 bg-emerald-50 text-emerald-700",["Cooking","Paused"].includes(workflowStatus),() => setCompletionOrder(workflowOrder)],
+                  [Package,"Start Packaging","Start the packaging process.","Start Packaging","border-purple-300 bg-purple-50 text-purple-700",workflowStatus === "Awaiting Packaging",() => setPackagingStartOrder(workflowOrder)],
+                  [CircleCheck,"Complete Packaging","Mark packaging as completed.","Complete Packaging","border-emerald-300 bg-emerald-50 text-emerald-700",workflowStatus === "Packaging",() => setPackagingCompletionOrder(workflowOrder)],
+                ] as Array<[typeof ChefHat,string,string,string,string,boolean,() => void]>).map(([Icon,title,description,buttonLabel,color,enabled,onClick]) => <div key={title} className={`flex items-center gap-3 rounded-xl border bg-white p-3 ${color.split(" ")[0]}`}><div className={`shrink-0 rounded-full p-3 ${color.split(" ").slice(1).join(" ")}`}><Icon size={22} /></div><div className="min-w-0 flex-1"><h4 className="text-sm font-black">{title}</h4><p className="mt-1 text-xs text-slate-500">{description}</p></div><button disabled={!enabled} onClick={onClick} className={`shrink-0 rounded-lg px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 ${color.includes("purple") ? "bg-purple-600" : color.includes("orange") ? "bg-orange-500" : color.includes("red") ? "bg-red-600" : "bg-emerald-600"}`}>{buttonLabel}</button></div>)}
               </div>
-            )}
+              <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 p-4"><p className="text-xs font-black text-blue-800">Current Status</p><p className="mt-2 text-sm text-slate-600">{workflowStatus === "Waiting" ? "This order is waiting to start cooking." : workflowStatus === "Cooking" ? "This order is currently being cooked." : workflowStatus === "Paused" ? "Cooking is currently paused." : workflowStatus === "Stopped" ? "Cooking has been stopped." : workflowStatus === "Awaiting Packaging" ? "Cooking is complete and this order is ready for packaging." : workflowStatus === "Packaging" ? "This order is currently being packaged." : workflowIsComplete ? "Production has been completed." : `Current production status: ${workflowStatus}.`}</p>{["Cooking","Paused"].includes(workflowStatus) && <p className="mt-1 font-mono text-xs text-slate-600">Elapsed Time: {formatElapsedTime(elapsedProductionTime(workflowOrder))}</p>}{workflowStatus === "Awaiting Packaging" && canReopenProduction && <button onClick={() => { setReopenOrder(workflowOrder); setReopenReason(""); }} className="mt-3 rounded-lg bg-[#081c35] px-3 py-2 text-xs font-bold text-white">Reopen Production</button>}</div>
+            </>}
           </aside>
           </div>
 
@@ -1372,15 +1396,13 @@ export default function KitchenPage() {
             <h3 className="text-xs font-black uppercase tracking-wide text-slate-800">Production Workflow Overview</h3>
             <div className="mt-4 flex items-stretch gap-2 overflow-x-auto pb-1">
               {[
-                [Package, "Packaging", "Initial", "border-purple-200 bg-purple-50 text-purple-700"],
                 [ChefHat, "Start Cooking", "", "border-emerald-200 bg-emerald-50 text-emerald-700"],
-                [Play, "Cooking", "In Progress", "border-blue-200 bg-blue-50 text-blue-700"],
-                [Pause, "Pause / Resume", "If needed", "border-orange-200 bg-orange-50 text-orange-700"],
-                [AlertTriangle, "Stop", "If needed", "border-red-200 bg-red-50 text-red-700"],
+                [Pause, "Pause", "", "border-orange-200 bg-orange-50 text-orange-700"],
+                [AlertTriangle, "Stop", "", "border-red-200 bg-red-50 text-red-700"],
                 [CircleCheck, "Complete Cooking", "", "border-emerald-200 bg-emerald-50 text-emerald-700"],
                 [Package, "Start Packaging", "", "border-purple-200 bg-purple-50 text-purple-700"],
-                [Package, "Packaging", "In Progress", "border-purple-200 bg-purple-50 text-purple-700"],
-              ].map(([Icon, label, detail, color], index) => <div key={`${String(label)}-${index}`} className="flex shrink-0 items-center gap-2"><div className={`flex h-20 w-24 flex-col items-center justify-center rounded-lg border p-2 text-center ${String(color)}`}><Icon size={18} /><p className="mt-1 text-[10px] font-black">{String(label)}</p>{detail && <p className="text-[9px]">({String(detail)})</p>}</div>{index < 7 && <span className="font-black text-slate-500">→</span>}</div>)}
+                [CircleCheck, "Complete Packaging", "", "border-emerald-200 bg-emerald-50 text-emerald-700"],
+              ].map(([Icon, label, detail, color], index, items) => <div key={`${String(label)}-${index}`} className="flex shrink-0 items-center gap-2"><div className={`flex h-20 w-24 flex-col items-center justify-center rounded-lg border p-2 text-center ${String(color)}`}><Icon size={18} /><p className="mt-1 text-[10px] font-black">{String(label)}</p>{detail && <p className="text-[9px]">({String(detail)})</p>}</div>{index < items.length - 1 && <span className="font-black text-slate-500">→</span>}</div>)}
             </div>
           </div>
 
@@ -1877,6 +1899,14 @@ export default function KitchenPage() {
         )}
 
       </div>
+
+      {startOrder && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/70 p-4"><div role="dialog" aria-modal="true" className="w-full max-w-lg rounded-3xl bg-white p-7 shadow-2xl"><div className="flex justify-between"><h2 className="text-2xl font-bold">Start Cooking</h2><button onClick={() => setStartOrder(null)} aria-label="Close"><X /></button></div><p className="mt-5 text-slate-700">Are you sure you want to start cooking this order?</p><dl className="mt-5 grid grid-cols-2 gap-3 rounded-2xl bg-slate-50 p-4 text-sm"><div><dt className="text-slate-500">Order ID</dt><dd className="font-bold">#{startOrder[0]}</dd></div><div><dt className="text-slate-500">Customer</dt><dd className="font-bold">{startOrder[1]}</dd></div><div><dt className="text-slate-500">Meals</dt><dd className="font-bold">{startOrder[2]}</dd></div></dl><div className="mt-7 flex justify-end gap-3"><button onClick={() => setStartOrder(null)} className="rounded-xl border px-5 py-3 font-bold">Cancel</button><button onClick={() => { const order=startOrder; setStartOrder(null); void handleProductionAction(order,"start").then((ok)=>{if(ok)setActiveWorkflowOrder(order.map((value,index)=>index===5?"Cooking":value));}); }} className="rounded-xl bg-emerald-600 px-5 py-3 font-bold text-white">Start Cooking</button></div></div></div>}
+
+      {stopOrder && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/70 p-4"><div role="dialog" aria-modal="true" className="w-full max-w-lg rounded-3xl bg-white p-7 shadow-2xl"><div className="flex justify-between"><h2 className="text-2xl font-bold">Stop Cooking</h2><button onClick={() => setStopOrder(null)} aria-label="Close"><X /></button></div><p className="mt-5 text-slate-700">Are you sure you want to stop cooking this order?</p><p className="mt-1 text-slate-700">This will stop the cooking process.</p><div className="mt-5 rounded-2xl bg-slate-50 p-4 text-sm"><span className="text-slate-500">Order ID: </span><span className="font-bold">#{stopOrder[0]}</span></div><div className="mt-7 flex justify-end gap-3"><button onClick={() => setStopOrder(null)} className="rounded-xl border px-5 py-3 font-bold">Cancel</button><button onClick={() => { const order=stopOrder; setStopOrder(null); void handleProductionAction(order,"stop").then((ok)=>{if(ok)setActiveWorkflowOrder(order.map((value,index)=>index===5?"Stopped":value));}); }} className="rounded-xl bg-red-600 px-5 py-3 font-bold text-white">Stop Cooking</button></div></div></div>}
+
+      {packagingStartOrder && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/70 p-4"><div role="dialog" aria-modal="true" className="w-full max-w-lg rounded-3xl bg-white p-7 shadow-2xl"><div className="flex justify-between"><h2 className="text-2xl font-bold">Start Packaging</h2><button onClick={() => setPackagingStartOrder(null)} aria-label="Close"><X /></button></div><p className="mt-5 text-slate-700">Are you sure you want to start packaging this order?</p><dl className="mt-5 grid grid-cols-2 gap-3 rounded-2xl bg-slate-50 p-4 text-sm"><div><dt className="text-slate-500">Order ID</dt><dd className="font-bold">#{packagingStartOrder[0]}</dd></div><div><dt className="text-slate-500">Customer</dt><dd className="font-bold">{packagingStartOrder[1]}</dd></div><div><dt className="text-slate-500">Meals</dt><dd className="font-bold">{packagingStartOrder[2]}</dd></div></dl><div className="mt-7 flex justify-end gap-3"><button onClick={() => setPackagingStartOrder(null)} className="rounded-xl border px-5 py-3 font-bold">Cancel</button><button onClick={() => void confirmPackagingStart()} className="rounded-xl bg-purple-600 px-5 py-3 font-bold text-white">Start Packaging</button></div></div></div>}
+
+      {packagingCompletionOrder && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/70 p-4"><div role="dialog" aria-modal="true" className="w-full max-w-lg rounded-3xl bg-white p-7 shadow-2xl"><div className="flex justify-between"><h2 className="text-2xl font-bold">Complete Packaging</h2><button onClick={() => setPackagingCompletionOrder(null)} aria-label="Close"><X /></button></div><p className="mt-5 text-slate-700">Are you sure you want to complete packaging for this order?</p><dl className="mt-5 grid grid-cols-2 gap-3 rounded-2xl bg-slate-50 p-4 text-sm"><div><dt className="text-slate-500">Order ID</dt><dd className="font-bold">#{packagingCompletionOrder[0]}</dd></div><div><dt className="text-slate-500">Customer</dt><dd className="font-bold">{packagingCompletionOrder[1]}</dd></div><div><dt className="text-slate-500">Meals</dt><dd className="font-bold">{packagingCompletionOrder[2]}</dd></div></dl><div className="mt-7 flex justify-end gap-3"><button onClick={() => setPackagingCompletionOrder(null)} className="rounded-xl border px-5 py-3 font-bold">Cancel</button><button onClick={() => void confirmPackagingCompletion()} className="rounded-xl bg-emerald-600 px-5 py-3 font-bold text-white">Complete Packaging</button></div></div></div>}
 
       {completionOrder && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/70 p-4">
         <div role="dialog" aria-modal="true" aria-labelledby="complete-production-title" className="w-full max-w-lg rounded-3xl bg-white p-7 shadow-2xl">
