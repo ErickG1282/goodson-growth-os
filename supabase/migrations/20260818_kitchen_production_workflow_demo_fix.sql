@@ -123,7 +123,8 @@ begin
   notification_title:=case
     when lower(coalesce(new.label,'')) in ('production completed','cooking completed') then 'Packaging Stage'
     when lower(coalesce(new.label,''))='packaging started' then 'Packaging Started'
-    when lower(coalesce(new.label,'')) in ('packaging completed','packaging complete') then 'Packaging Completed'
+    when lower(coalesce(new.label,'')) in ('packaging completed','packaging complete') then
+      case when lower(coalesce(order_row.delivery_method,'pickup'))='delivery' then 'Ready For Delivery' else 'Ready For Pickup' end
     when lower(coalesce(new.label,'')) like '%reopened%' then 'Production Reopened'
     when lower(coalesce(new.label,'')) like '%started%' then 'Production Started'
     when lower(coalesce(new.label,'')) like '%paused%' then 'Production Paused'
@@ -131,8 +132,8 @@ begin
     when lower(coalesce(new.label,'')) like '%stopped%' then 'Production Stopped'
     else null end;
   if notification_title is not null then
-    notification_severity:=case when notification_title='Production Stopped' then 'critical' when notification_title='Production Paused' then 'warning' when notification_title in ('Packaging Stage','Packaging Completed') then 'success' else 'info' end;
-    notification_message:=case when notification_title='Packaging Stage' then 'Cooking completed. This order is now in the Packaging stage and ready to be packaged.' when notification_title='Packaging Started' then 'Packaging has started for this order.' when notification_title='Packaging Completed' then 'Packaging has been completed for this order.' else notification_title||case when new.reason is not null then ': '||new.reason else '.' end end;
+    notification_severity:=case when notification_title='Production Stopped' then 'critical' when notification_title='Production Paused' then 'warning' when notification_title in ('Packaging Stage','Ready For Pickup','Ready For Delivery') then 'success' else 'info' end;
+    notification_message:=case when notification_title='Packaging Stage' then 'Cooking completed. This order is now in the Packaging stage and ready to be packaged.' when notification_title='Packaging Started' then 'Packaging has started for this order.' when notification_title='Ready For Pickup' then 'This order has completed packaging and is ready for pickup.' when notification_title='Ready For Delivery' then 'This order has completed packaging and is ready for delivery.' else notification_title||case when new.reason is not null then ': '||new.reason else '.' end end;
     perform public.gbgs_create_notification(new.business_id,'Kitchen',notification_title,notification_message,new.order_id,order_row.customer_id,notification_severity,new.user_id);
   end if;
   return new;

@@ -1289,7 +1289,7 @@ export default function KitchenPage() {
 
           <div className="mt-6 flex gap-3">
             <button type="button" onClick={() => setSelectedProductionOrders(new Set(productionQueueOrders.filter((order) => order.production_status === "Waiting").map((order) => order.id)))} className="rounded-lg bg-[#081c35] px-4 py-2 text-sm font-bold text-white">Select All</button>
-            <button type="button" onClick={() => setSelectedProductionOrders(new Set())} className="rounded-lg border px-4 py-2 text-sm font-bold">Clear Selection</button>
+            <button type="button" onClick={() => { setSelectedProductionOrders(new Set()); setActiveWorkflowOrder(null); }} className="rounded-lg border px-4 py-2 text-sm font-bold">Clear Selection</button>
           </div>
 
           <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(360px,1fr)]">
