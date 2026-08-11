@@ -43,7 +43,7 @@ import Link from "next/link";
 import { SidebarContent } from "@/components/dashboard/sidebar";
 import { TodaysAlerts } from "@/components/miz-rita/todays-alerts";
 import { supabase } from "@/lib/supabase";
-import { queryProductionQueue, summarizeProductionQueue, type ProductionQueueOrder, type ProductionQueueSummary } from "@/lib/production-queue";
+import { queryProductionQueue, type ProductionQueueOrder } from "@/lib/production-queue";
 
 type Customer = {
   id: string;
@@ -75,6 +75,7 @@ type Order = {
   total: number;
   balance_due: number;
   notes?: string | null;
+  production_status?: ProductionQueueOrder["production_status"] | null;
   created_at?: string;
 };
 
@@ -245,7 +246,7 @@ export default function MizRitaPage() {
   const [showEndOfDay, setShowEndOfDay] = useState(false);
   const [workflowEvents, setWorkflowEvents] = useState<Record<string, OrderWorkflowEvent[]>>({});
   const [toastMessage, setToastMessage] = useState("");
-  const [productionQueueSummary, setProductionQueueSummary] = useState<ProductionQueueSummary>({ waitingOrders: 0, mealsWaiting: 0, overdueOrders: 0, cookingOrders: 0, pausedOrders: 0, packagingOrders: 0, readyOrders: 0, mealsRemaining: 0, progress: 0 });
+  const [productionQueueOrders, setProductionQueueOrders] = useState<ProductionQueueOrder[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -329,7 +330,7 @@ export default function MizRitaPage() {
         supabase.from("gbgs_order_workflow_events").select("id, order_id, status, label, created_at").eq("business_id", business.id).order("created_at"),
         supabase.from("gbgs_menu_meals").select("id, name, selling_price").eq("business_id", business.id).eq("status", "Active").order("name"),
         supabase.from("gbgs_deliveries").select("id, order_id, delivery_type, driver_name, status, scheduled_at, completed_at").eq("business_id", business.id),
-        queryProductionQueue(supabase, business.id),
+        queryProductionQueue(supabase, business.id, true),
       ]);
 
       if (customerError || orderError || productionError || inventoryError || workflowError || menuError || deliveryError || productionQueueResult.error) {
@@ -356,7 +357,7 @@ export default function MizRitaPage() {
       (workflowData ?? []).forEach((event) => { grouped[event.order_id] = [...(grouped[event.order_id] ?? []), { id: event.id, status: normalizeWorkflowStatus(event.status), label: event.label, createdAt: event.created_at }]; });
       setWorkflowEvents(grouped);
       setMenuPlans((menuData ?? []).map((meal) => ({ id: meal.id, name: meal.name, meals: 1, price: Number(meal.selling_price) })));
-      setProductionQueueSummary(summarizeProductionQueue((productionQueueResult.data ?? []) as ProductionQueueOrder[]));
+      setProductionQueueOrders((productionQueueResult.data ?? []) as ProductionQueueOrder[]);
     } catch (caughtError) {
       setError(getErrorMessage(caughtError));
     } finally {
@@ -452,7 +453,7 @@ export default function MizRitaPage() {
             customerNames.get(order.customer_id) || "Unknown customer",
           meal_plan: details.mealPlan,
           meals: Number.isFinite(meals) ? meals : 0,
-          production_status: getProductionStatus(order.fulfillment_date),
+          schedule_status: getProductionStatus(order.fulfillment_date),
         };
       })
       .sort((a, b) => {
@@ -465,13 +466,13 @@ export default function MizRitaPage() {
   const mealsDueToday = useMemo(
     () =>
       productionOrders
-        .filter((order) => order.production_status === "Prep Today")
+        .filter((order) => order.schedule_status === "Prep Today")
         .reduce((sum, order) => sum + order.meals, 0),
     [productionOrders],
   );
 
   const upcomingMeals = useMemo(
-    () => productionOrders.reduce((sum, order) => sum + order.meals, 0),
+    () => productionOrders.filter((order) => ["Prep Tomorrow", "Upcoming"].includes(order.schedule_status)).reduce((sum, order) => sum + order.meals, 0),
     [productionOrders],
   );
 
@@ -798,7 +799,7 @@ export default function MizRitaPage() {
           deliveries={deliveries}
           productionOrders={productionOrders}
           menuPlans={menuPlans}
-          productionQueueSummary={productionQueueSummary}
+          productionQueueOrders={productionQueueOrders}
           customerNames={customerNames}
           production={dashboardProduction}
           productionSummary={dashboardProductionSummary}
@@ -1068,7 +1069,7 @@ export default function MizRitaPage() {
                       </td>
                       <td className="px-3 py-4">
                         <ProductionStatusBadge
-                          value={order.production_status}
+                          value={order.schedule_status}
                         />
                       </td>
                       <td className="px-3 py-4">
@@ -1867,7 +1868,7 @@ function DailyCommandCenter({
   deliveries,
   productionOrders,
   menuPlans,
-  productionQueueSummary,
+  productionQueueOrders,
   customerNames,
   production,
   productionSummary,
@@ -1884,10 +1885,10 @@ function DailyCommandCenter({
     customer_name: string;
     meal_plan: string;
     meals: number;
-    production_status: string;
+    schedule_status: string;
   }>;
   menuPlans: Array<{ id: string; name: string }>;
-  productionQueueSummary: ProductionQueueSummary;
+  productionQueueOrders: ProductionQueueOrder[];
   customerNames: Map<string, string>;
   production: DashboardProductionItem[];
   productionSummary: {
@@ -1904,11 +1905,14 @@ function DailyCommandCenter({
   onCloseDay: () => void;
   onReturn: () => void;
 }) {
-  const dateKey = new Date().toISOString().slice(0, 10);
-  const todaysOrders = orders.filter((order) =>
-    (order.fulfillment_date ?? order.order_date)?.startsWith(dateKey),
+  const dateKey = getLocalDateKey();
+  const activeToday = orders.filter(
+    (order) => order.order_status !== "Cancelled" && order.fulfillment_date?.slice(0, 10) === dateKey,
   );
-  const activeToday = todaysOrders.length ? todaysOrders : productionOrders;
+  const todayProductionOrders = productionQueueOrders.filter(
+    (order) => order.order_status !== "Cancelled" && order.fulfillment_date?.slice(0, 10) === dateKey,
+  );
+  const productionQueueSummary = summarizeDashboardProduction(productionQueueOrders, dateKey);
   const mealNames = new Map(menuPlans.map((meal) => [meal.id, meal.name]));
   const orderDetails = activeToday.map((order) => {
     const details = parseOrderDetails(order.notes, order.meal_count);
@@ -1924,19 +1928,10 @@ function DailyCommandCenter({
           : customerNames.get(order.customer_id) ?? "Unknown customer",
     };
   });
-  const mealsScheduled = productionSummary.meals || (production.length
-    ? Math.max(0, ...production.map((item) => item.meals))
-    : orderDetails.reduce(
-        (sum, order) => sum + Number(order.details.numberOfMeals || 0),
-        0,
-      ));
-  const completedProduction = productionSummary.completedItems || production.filter((item) => item.status === "Complete").length;
-  const productionItemCount = productionSummary.itemCount || production.length;
-  const productionProgress = productionItemCount
-    ? Math.round((completedProduction / productionItemCount) * 100)
-    : 0;
-  const mealsCompleted = Math.round(mealsScheduled * productionProgress / 100);
-  const mealsRemaining = Math.max(mealsScheduled - mealsCompleted, 0);
+  const mealsScheduled = productionQueueSummary.totalMeals;
+  const productionProgress = productionQueueSummary.progress;
+  const mealsCompleted = productionQueueSummary.mealsCompleted;
+  const mealsRemaining = productionQueueSummary.mealsRemaining;
   const inventoryAlerts = inventory.filter((item) => item.quantity < item.parLevel);
   const completedOrders = activeToday.filter((order) => order.order_status === "Completed");
   const deliveriesToday = deliveries.filter((delivery) => delivery.delivery_type === "Delivery" && delivery.scheduled_at?.startsWith(dateKey));
@@ -1964,20 +1959,24 @@ function DailyCommandCenter({
     .filter((value) => value && value !== "Not scheduled")
     .sort();
   const firstPickup = pickupTimes[0] || "Not scheduled";
-  const stationCounts = ["Waiting", "Prep", "Cooking", "Packaging", "Complete"].map(
-    (status) => ({
-      status,
-      meals: production
-        .filter((item) => item.status === status)
-        .reduce((sum, item) => sum + item.meals, 0),
-    }),
-  );
+  const stationCounts = [
+    { status: "Waiting", statuses: ["Waiting", "Stopped"] },
+    { status: "Cooking", statuses: ["Cooking", "Paused"] },
+    { status: "Awaiting Packaging", statuses: ["Awaiting Packaging"] },
+    { status: "Packaging", statuses: ["Packaging"] },
+    { status: "Ready For Pickup", statuses: ["Ready For Pickup", "Ready For Delivery", "Completed"] },
+  ].map(({ status, statuses }) => ({
+    status,
+    meals: todayProductionOrders
+      .filter((order) => statuses.includes(order.production_status))
+      .reduce((sum, order) => sum + (Number(order.meal_count) || 0), 0),
+  }));
   const nextAction =
     inventoryAlerts.some((item) => item.quantity <= 0)
       ? { label: "Receive Inventory", href: "/dashboard/miz-rita/inventory" }
       : productionProgress === 0
         ? { label: "Start Today's Production", href: "/dashboard/miz-rita/kitchen" }
-        : production.some((item) => item.status === "Packaging")
+        : todayProductionOrders.some((item) => item.production_status === "Packaging")
           ? { label: "Begin Packaging", href: "/dashboard/miz-rita/kitchen" }
           : productionProgress < 100
             ? { label: "Continue Kitchen Production", href: "/dashboard/miz-rita/kitchen" }
@@ -1985,12 +1984,12 @@ function DailyCommandCenter({
               ? { label: "Print Delivery List", href: "#delivery-queue" }
               : { label: "Close Today's Operations", href: "#close-day" };
   const workflow = [
-    { label: "Orders Received", count: activeToday.length, progress: activeToday.length ? 100 : 0 },
-    { label: "Kitchen Production", count: activeToday.length, progress: productionProgress },
-    { label: "Packaging", count: production.filter((item) => ["Packaging", "Complete"].includes(item.status)).length, progress: production.length ? Math.round(production.filter((item) => ["Packaging", "Complete"].includes(item.status)).length / production.length * 100) : 0 },
-    { label: "Ready For Pickup", count: activeToday.filter((order) => ["Ready For Pickup", "Out For Delivery", "Delivered", "Completed"].includes(normalizeWorkflowStatus(order.order_status))).length, progress: activeToday.length ? Math.round(activeToday.filter((order) => ["Ready For Pickup", "Out For Delivery", "Delivered", "Completed"].includes(normalizeWorkflowStatus(order.order_status))).length / activeToday.length * 100) : 0 },
-    { label: "Deliveries", count: deliveriesToday.length, progress: deliveriesToday.length ? Math.round((deliveriesToday.length - deliveriesRemaining) / deliveriesToday.length * 100) : 0 },
-    { label: "Completed", count: completedOrders.length, progress: activeToday.length ? Math.round(completedOrders.length / activeToday.length * 100) : 0 },
+    { label: "Orders Received", count: todayProductionOrders.filter((order) => order.production_status === "Waiting").length, progress: activeToday.length ? 100 : 0 },
+    { label: "Kitchen Production", count: todayProductionOrders.filter((order) => ["Cooking", "Paused", "Stopped"].includes(order.production_status)).length, progress: productionProgress },
+    { label: "Packaging", count: todayProductionOrders.filter((order) => ["Awaiting Packaging", "Packaging"].includes(order.production_status)).length, progress: todayProductionOrders.length ? Math.round(todayProductionOrders.filter((item) => ["Awaiting Packaging", "Packaging", "Ready For Pickup", "Ready For Delivery", "Completed"].includes(item.production_status)).length / todayProductionOrders.length * 100) : 0 },
+    { label: "Ready For Pickup", count: todayProductionOrders.filter((order) => order.production_status === "Ready For Pickup").length, progress: todayProductionOrders.length ? Math.round(todayProductionOrders.filter((order) => ["Ready For Pickup", "Ready For Delivery", "Completed"].includes(order.production_status)).length / todayProductionOrders.length * 100) : 0 },
+    { label: "Deliveries", count: todayProductionOrders.filter((order) => order.production_status === "Ready For Delivery").length, progress: deliveriesToday.length ? Math.round((deliveriesToday.length - deliveriesRemaining) / deliveriesToday.length * 100) : 0 },
+    { label: "Completed", count: todayProductionOrders.filter((order) => order.production_status === "Completed").length, progress: activeToday.length ? Math.round(completedOrders.length / activeToday.length * 100) : 0 },
   ];
   const currentWorkflow = workflow.findIndex((stage) => stage.progress < 100);
 
@@ -2104,7 +2103,7 @@ function DailyCommandCenter({
             ["Orders Currently Cooking", productionQueueSummary.cookingOrders],
             ["Orders Paused", productionQueueSummary.pausedOrders],
             ["Orders Packaging", productionQueueSummary.packagingOrders],
-            ["Orders Ready", productionQueueSummary.readyOrders],
+            ["Orders Ready For Pickup / Delivery", productionQueueSummary.readyOrders],
             ["Kitchen Progress", `${productionQueueSummary.progress}%`],
             ["Meals Remaining", productionQueueSummary.mealsRemaining],
           ].map(([label, value]) => (
@@ -2185,7 +2184,7 @@ function DailyCommandCenter({
             <tbody>{orderDetails.filter((order) => !["Completed", "Cancelled"].includes(order.order_status)).slice(0, 8).map((order) => (
               <tr key={order.id} className="border-b border-slate-100">
                 <td className="px-3 py-4 font-bold">{order.customerName}</td><td className="px-3 py-4">{order.details.mealPlan}</td><td className="px-3 py-4">{order.details.numberOfMeals}</td><td className="px-3 py-4">{order.delivery_method || "Pickup"}</td><td className="px-3 py-4">{order.details.pickupDeliveryTime}</td><td className="px-3 py-4"><StatusBadge value={order.order_status} /></td>
-                <td className="px-3 py-4"><button disabled={normalizeWorkflowStatus(order.order_status) === "Ready For Pickup"} onClick={() => onReady(order.id)} className="rounded-xl bg-emerald-600 px-4 py-2 font-bold text-white disabled:opacity-40">Ready</button></td>
+                <td className="px-3 py-4"><button disabled={normalizeWorkflowStatus(order.order_status) === "Ready For Pickup"} onClick={() => onReady(order.id)} className="rounded-xl bg-emerald-600 px-4 py-2 font-bold text-white disabled:opacity-40">Ready For Pickup</button></td>
               </tr>
             ))}</tbody>
           </table>
@@ -4510,7 +4509,7 @@ function ProductionStatusBadge({ value }: { value: string }) {
   let className =
     "bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-200";
 
-  if (value === "Prep Today") {
+  if (value === "Overdue" || value === "Prep Today") {
     className = "bg-red-50 text-red-700 ring-1 ring-inset ring-red-200";
   } else if (value === "Prep Tomorrow") {
     className = "bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200";
@@ -4709,7 +4708,7 @@ function StatusBadge({ value }: { value: string }) {
     <span
       className={`inline-flex rounded-full px-3 py-1 text-xs font-bold ${className}`}
     >
-      {value}
+      {normalized === "ready" ? "Ready For Pickup" : value}
     </span>
   );
 }
@@ -4727,7 +4726,11 @@ function getProductionStatus(fulfillmentDate: string | null) {
     (fulfillment.getTime() - today.getTime()) / 86400000,
   );
 
-  if (differenceInDays <= 0) {
+  if (differenceInDays < 0) {
+    return "Overdue";
+  }
+
+  if (differenceInDays === 0) {
     return "Prep Today";
   }
 
@@ -4736,6 +4739,43 @@ function getProductionStatus(fulfillmentDate: string | null) {
   }
 
   return "Upcoming";
+}
+
+function getLocalDateKey(date = new Date()) {
+  return date.toLocaleDateString("en-CA");
+}
+
+function summarizeDashboardProduction(orders: ProductionQueueOrder[], today: string) {
+  const completedStatuses = ["Ready For Pickup", "Ready For Delivery", "Completed"];
+  const activeOrders = orders.filter((order) => order.order_status !== "Cancelled");
+  const todayOrders = activeOrders.filter((order) => order.fulfillment_date?.slice(0, 10) === today);
+  const meals = (order: ProductionQueueOrder) => Number(order.meal_count) || 0;
+  const progressWeight = (status: ProductionQueueOrder["production_status"]) => {
+    if (completedStatuses.includes(status)) return 1;
+    if (status === "Packaging") return 0.8;
+    if (status === "Awaiting Packaging") return 0.7;
+    if (["Cooking", "Paused", "Stopped"].includes(status)) return 0.5;
+    return 0;
+  };
+  const totalMeals = todayOrders.reduce((sum, order) => sum + meals(order), 0);
+  const weightedCompletedMeals = todayOrders.reduce(
+    (sum, order) => sum + meals(order) * progressWeight(order.production_status),
+    0,
+  );
+
+  return {
+    waitingOrders: todayOrders.filter((order) => ["Waiting", "Stopped"].includes(order.production_status)).length,
+    mealsWaiting: todayOrders.filter((order) => ["Waiting", "Stopped"].includes(order.production_status)).reduce((sum, order) => sum + meals(order), 0),
+    overdueOrders: activeOrders.filter((order) => !completedStatuses.includes(order.production_status) && Boolean(order.fulfillment_date) && order.fulfillment_date!.slice(0, 10) < today).length,
+    cookingOrders: todayOrders.filter((order) => order.production_status === "Cooking").length,
+    pausedOrders: todayOrders.filter((order) => order.production_status === "Paused").length,
+    packagingOrders: todayOrders.filter((order) => ["Awaiting Packaging", "Packaging"].includes(order.production_status)).length,
+    readyOrders: todayOrders.filter((order) => ["Ready For Pickup", "Ready For Delivery"].includes(order.production_status)).length,
+    mealsRemaining: todayOrders.filter((order) => !completedStatuses.includes(order.production_status)).reduce((sum, order) => sum + meals(order), 0),
+    mealsCompleted: todayOrders.filter((order) => completedStatuses.includes(order.production_status)).reduce((sum, order) => sum + meals(order), 0),
+    totalMeals,
+    progress: totalMeals ? Math.round(weightedCompletedMeals / totalMeals * 100) : 0,
+  };
 }
 
 function buildOrderNotes(form: OrderFormState) {

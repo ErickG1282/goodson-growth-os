@@ -10,7 +10,7 @@ export type ProductionQueueOrder = {
   notes: string | null;
   delivery_method: string | null;
   fulfillment_date: string | null;
-  production_status: "Waiting" | "Cooking" | "Paused" | "Stopped" | "Packaging" | "Ready For Pickup" | "Completed";
+  production_status: "Waiting" | "Cooking" | "Paused" | "Stopped" | "Awaiting Packaging" | "Packaging" | "Ready For Pickup" | "Ready For Delivery" | "Completed";
   production_started_at: string | null;
   production_paused_at: string | null;
   production_resumed_at: string | null;
@@ -32,14 +32,15 @@ export type ProductionQueueSummary = {
   progress: number;
 };
 
-export async function queryProductionQueue(client: SupabaseClient, businessId: string) {
+export async function queryProductionQueue(client: SupabaseClient, businessId: string, includeCompleted = false) {
   const columns = "id, order_number, customer_id, meal_id, meal_count, order_status, notes, delivery_method, fulfillment_date, production_status, production_started_at, production_paused_at, production_resumed_at, production_completed_at, production_stopped_at, production_elapsed_seconds, production_stop_reason";
-  return client
+  let query = client
     .from("gbgs_orders")
     .select(columns)
     .eq("business_id", businessId)
-    .not("order_status", "in", '("Completed","Cancelled")')
     .order("created_at", { ascending: false });
+  if (!includeCompleted) query = query.not("order_status", "in", '("Completed","Cancelled")');
+  return query;
 }
 
 export function summarizeProductionQueue(
