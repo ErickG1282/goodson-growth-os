@@ -2,10 +2,12 @@
 
 import Image from "next/image"
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
+import { useState } from "react"
 import { LogOut } from "lucide-react"
 import { navItems } from "./nav-items"
 import { cn } from "@/lib/utils"
+import { supabase } from "@/lib/supabase"
 
 interface SidebarProps {
   onNavigate?: () => void
@@ -27,6 +29,21 @@ const routes: Record<string, string> = {
 
 export function SidebarContent({ onNavigate }: SidebarProps) {
   const pathname = usePathname()
+  const router = useRouter()
+  const [signingOut, setSigningOut] = useState(false)
+
+  async function handleSignOut() {
+    setSigningOut(true)
+    const { error } = await supabase.auth.signOut()
+
+    if (error) {
+      setSigningOut(false)
+      return
+    }
+
+    onNavigate?.()
+    router.replace("/")
+  }
 
   return (
     <div className="flex h-full flex-col bg-[#061B33] text-white">
@@ -80,14 +97,15 @@ export function SidebarContent({ onNavigate }: SidebarProps) {
       </nav>
 
       <div className="border-t border-white/10 px-3 py-4">
-        <Link
-          href="/"
-          onClick={onNavigate}
-          className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-white/70 hover:bg-white/5 hover:text-white"
+        <button
+          type="button"
+          onClick={handleSignOut}
+          disabled={signingOut}
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-white/70 hover:bg-white/5 hover:text-white disabled:opacity-60"
         >
           <LogOut className="h-5 w-5" />
-          Log Out
-        </Link>
+          {signingOut ? "Logging Out..." : "Log Out"}
+        </button>
       </div>
     </div>
   )
