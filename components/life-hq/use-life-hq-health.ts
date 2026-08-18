@@ -1,0 +1,110 @@
+"use client"
+
+import { useCallback, useEffect, useState } from "react"
+import { supabase } from "@/lib/supabase"
+import { localDateKey, packLifeNotes } from "@/lib/life-hq"
+
+export type WorkoutStatus = "Planned" | "Completed" | "Skipped"
+export type DailyHealthRecord = { id:string; user_id:string; record_date:string; workout_name:string; workout_time:string|null; workout_status:WorkoutStatus; workout_notes:string; weight_lbs:number|null; protein_target_g:number|null; calorie_target:number|null; water_target_oz:number|null; calendar_event_id:string|null }
+export type ExerciseSet = { id:string; exercise_id:string; set_number:number; reps:number }
+export type Exercise = { id:string; exercise_name:string; weight_used:number|null; weight_unit:string; notes:string; sort_order:number; sets:ExerciseSet[] }
+export type FoodItem = { id:string; meal_id:string; food_name:string; serving_amount:number|null; serving_unit:string; grams_consumed:number|null; protein_g:number; carbohydrates_g:number; fat_g:number; calories:number; nutrition_source:string; external_food_id:string|null; source_food_name:string|null; protein_per_100g:number|null; carbohydrates_per_100g:number|null; fat_per_100g:number|null; calories_per_100g:number|null; manually_overridden:boolean; sort_order:number }
+export type Meal = { id:string; daily_health_id:string; meal_label:string; meal_name:string; meal_time:string|null; sort_order:number; foods:FoodItem[] }
+export type WaterEntry = { id:string; daily_health_id:string; amount_oz:number; consumed_at:string }
+export type Supplement = { id:string; daily_health_id:string; supplement_name:string; amount:number|null; unit:string; taken:boolean; taken_at:string|null; sort_order:number }
+export type NutritionTotals = { protein:number; carbs:number; fat:number; calories:number }
+export type DailyHealthForm = { workoutName:string; workoutTime:string; workoutStatus:WorkoutStatus; workoutNotes:string; weightLbs:string; proteinTargetG:string; calorieTarget:string; waterTargetOz:string }
+export type ExerciseForm = { name:string; weight:string; unit:string; reps:string; notes:string }
+export type MealForm = { label:string; name:string; time:string }
+export type FoodForm = { name:string; servingAmount:string; servingUnit:string; grams:string; protein:string; carbs:string; fat:string; calories:string; nutritionSource:string; externalFoodId:string; sourceFoodName:string; proteinPer100g:string; carbsPer100g:string; fatPer100g:string; caloriesPer100g:string; manuallyOverridden:boolean }
+export type WaterForm = { amount:string; time:string }
+export type SupplementForm = { name:string; amount:string; unit:string; taken:boolean; time:string }
+export type DaySummary = { date:string; record:DailyHealthRecord|null; nutrition:NutritionTotals; water:number; supplementsTaken:number; supplementsTotal:number; workoutPct:number|null; nutritionPct:number|null; waterPct:number|null; supplementsPct:number|null }
+
+const EMPTY_FORM:DailyHealthForm={workoutName:"",workoutTime:"",workoutStatus:"Planned",workoutNotes:"",weightLbs:"",proteinTargetG:"",calorieTarget:"",waterTargetOz:""}
+const num=(value:string)=>value.trim()===""?null:Number(value)
+const textNum=(value:number|null)=>value===null?"":String(value)
+const timeNow=()=>{const date=new Date();return `${String(date.getHours()).padStart(2,"0")}:${String(date.getMinutes()).padStart(2,"0")}`}
+const dateShift=(key:string,days:number)=>{const date=new Date(`${key}T12:00:00`);date.setDate(date.getDate()+days);return localDateKey(date)}
+const weekBounds=(key:string)=>{const date=new Date(`${key}T12:00:00`);const mondayOffset=(date.getDay()+6)%7;return {start:dateShift(key,-mondayOffset),end:dateShift(key,6-mondayOffset)}}
+const formFor=(record:DailyHealthRecord|null):DailyHealthForm=>record?{workoutName:record.workout_name,workoutTime:record.workout_time?.slice(0,5)??"",workoutStatus:record.workout_status,workoutNotes:record.workout_notes,weightLbs:textNum(record.weight_lbs),proteinTargetG:textNum(record.protein_target_g),calorieTarget:textNum(record.calorie_target),waterTargetOz:textNum(record.water_target_oz)}:{...EMPTY_FORM}
+const totalsFor=(foods:FoodItem[]):NutritionTotals=>foods.reduce((sum,item)=>({protein:sum.protein+Number(item.protein_g),carbs:sum.carbs+Number(item.carbohydrates_g),fat:sum.fat+Number(item.fat_g),calories:sum.calories+Number(item.calories)}),{protein:0,carbs:0,fat:0,calories:0})
+const capped=(current:number,target:number|null)=>target&&target>0?Math.min(100,current/target*100):null
+const nutritionScore=(totals:NutritionTotals,record:DailyHealthRecord|null)=>{if(!record)return null;const protein=capped(totals.protein,record.protein_target_g),calories=record.calorie_target&&record.calorie_target>0?(totals.calories===0?0:Math.min(totals.calories/record.calorie_target,record.calorie_target/totals.calories)*100):null;const scores=[protein,calories].filter((v):v is number=>v!==null);return scores.length?scores.reduce((a,b)=>a+b,0)/scores.length:null}
+
+export function useLifeHqHealth(){
+  const todayKey=localDateKey()
+  const [selectedDate,setSelectedDate]=useState(todayKey)
+  const [record,setRecord]=useState<DailyHealthRecord|null>(null)
+  const [form,setForm]=useState<DailyHealthForm>({...EMPTY_FORM})
+  const [exercises,setExercises]=useState<Exercise[]>([])
+  const [meals,setMeals]=useState<Meal[]>([])
+  const [waterEntries,setWaterEntries]=useState<WaterEntry[]>([])
+  const [supplements,setSupplements]=useState<Supplement[]>([])
+  const [recentFoods,setRecentFoods]=useState<FoodItem[]>([])
+  const [week,setWeek]=useState<DaySummary[]>([])
+  const [loading,setLoading]=useState(true),[saving,setSaving]=useState(false),[message,setMessage]=useState("")
+
+  const load=useCallback(async()=>{
+    setLoading(true);setMessage("")
+    const {data:userData,error:userError}=await supabase.auth.getUser()
+    if(userError||!userData.user){setMessage(userError?.message??"Sign in required.");setLoading(false);return}
+    const bounds=weekBounds(selectedDate)
+    const [dailyResult,recentResult]=await Promise.all([
+      supabase.from("gbgs_life_daily_health").select("*").eq("user_id",userData.user.id).gte("record_date",bounds.start).lte("record_date",bounds.end).order("record_date"),
+      supabase.from("gbgs_life_health_food_items").select("*").eq("user_id",userData.user.id).order("created_at",{ascending:false}).limit(50),
+    ])
+    const {data:dailyData,error:dailyError}=dailyResult
+    if(dailyError){setMessage(dailyError.message);setLoading(false);return}
+    const daily=(dailyData??[]) as DailyHealthRecord[],ids=daily.map(item=>item.id),selected=daily.find(item=>item.record_date===selectedDate)??null
+    if(recentResult.error){setMessage(recentResult.error.message);setLoading(false);return}
+    const recentSeen=new Set<string>();setRecentFoods(((recentResult.data??[]) as FoodItem[]).filter(item=>{const key=item.external_food_id?`${item.nutrition_source}:${item.external_food_id}`:item.food_name.trim().toLowerCase();if(recentSeen.has(key))return false;recentSeen.add(key);return true}).slice(0,8))
+    let exerciseRows:any[]=[],setRows:any[]=[],mealRows:any[]=[],foodRows:any[]=[],waterRows:any[]=[],supplementRows:any[]=[]
+    if(ids.length){
+      const [exerciseResult,mealResult,waterResult,supplementResult]=await Promise.all([
+        supabase.from("gbgs_life_health_exercises").select("*").in("daily_health_id",ids).order("sort_order"),
+        supabase.from("gbgs_life_health_meals").select("*").in("daily_health_id",ids).order("sort_order"),
+        supabase.from("gbgs_life_health_water_entries").select("*").in("daily_health_id",ids).order("consumed_at"),
+        supabase.from("gbgs_life_health_supplements").select("*").in("daily_health_id",ids).order("sort_order"),
+      ])
+      const firstError=exerciseResult.error??mealResult.error??waterResult.error??supplementResult.error
+      if(firstError){setMessage(firstError.message);setLoading(false);return}
+      exerciseRows=exerciseResult.data??[];mealRows=mealResult.data??[];waterRows=waterResult.data??[];supplementRows=supplementResult.data??[]
+      if(exerciseRows.length){const result=await supabase.from("gbgs_life_health_exercise_sets").select("*").in("exercise_id",exerciseRows.map(item=>item.id)).order("set_number");if(result.error){setMessage(result.error.message);setLoading(false);return}setRows=result.data??[]}
+      if(mealRows.length){const result=await supabase.from("gbgs_life_health_food_items").select("*").in("meal_id",mealRows.map(item=>item.id)).order("sort_order");if(result.error){setMessage(result.error.message);setLoading(false);return}foodRows=result.data??[]}
+    }
+    const mealModels:Meal[]=mealRows.map(item=>({...item,foods:foodRows.filter(food=>food.meal_id===item.id)}))
+    const summaries:string[]=[];for(let date=bounds.start;date<=bounds.end;date=dateShift(date,1))summaries.push(date)
+    setWeek(summaries.map(date=>{const dayRecord=daily.find(item=>item.record_date===date)??null,dayIds=dayRecord?[dayRecord.id]:[],dayFoods=mealModels.filter(item=>dayIds.includes(item.daily_health_id)).flatMap(item=>item.foods),nutrition=totalsFor(dayFoods),dayWater=waterRows.filter(item=>dayIds.includes(item.daily_health_id)).reduce((sum,item)=>sum+Number(item.amount_oz),0),daySupplements=supplementRows.filter(item=>dayIds.includes(item.daily_health_id)),supplementPct=daySupplements.length?daySupplements.filter(item=>item.taken).length/daySupplements.length*100:null;return{date,record:dayRecord,nutrition,water:dayWater,supplementsTaken:daySupplements.filter(item=>item.taken).length,supplementsTotal:daySupplements.length,workoutPct:dayRecord?.workout_status==="Completed"?100:dayRecord?.workout_name?0:null,nutritionPct:nutritionScore(nutrition,dayRecord),waterPct:capped(dayWater,dayRecord?.water_target_oz??null),supplementsPct:supplementPct}}))
+    setRecord(selected);setForm(formFor(selected));setExercises(exerciseRows.filter(item=>item.daily_health_id===selected?.id).map(item=>({...item,sets:setRows.filter(set=>set.exercise_id===item.id)})));setMeals(mealModels.filter(item=>item.daily_health_id===selected?.id));setWaterEntries(waterRows.filter(item=>item.daily_health_id===selected?.id));setSupplements(supplementRows.filter(item=>item.daily_health_id===selected?.id));setLoading(false)
+  },[selectedDate])
+  useEffect(()=>{void load()},[load])
+
+  async function persistDaily(){
+    const values=[form.weightLbs,form.proteinTargetG,form.calorieTarget,form.waterTargetOz];if(values.some(value=>value&&(!Number.isFinite(Number(value))||Number(value)<0))){setMessage("Targets and body weight must be numbers of zero or greater.");return null}
+    const {data:userData}=await supabase.auth.getUser();if(!userData.user){setMessage("Sign in required.");return null}const now=new Date().toISOString()
+    const {data,error}=await supabase.from("gbgs_life_daily_health").upsert({user_id:userData.user.id,record_date:selectedDate,workout_name:form.workoutName.trim(),workout_time:form.workoutTime||null,workout_status:form.workoutStatus,workout_notes:form.workoutNotes.trim(),weight_lbs:num(form.weightLbs),protein_target_g:num(form.proteinTargetG),calorie_target:num(form.calorieTarget),water_target_oz:num(form.waterTargetOz),updated_at:now},{onConflict:"user_id,record_date"}).select("*").single()
+    if(error||!data){setMessage(error?.message??"Unable to save daily health.");return null}let saved=data as DailyHealthRecord
+    const shouldSync=Boolean(saved.workout_name&&saved.workout_time)
+    if(!shouldSync&&saved.calendar_event_id){const deleted=await supabase.from("gbgs_calendar_events").delete().eq("id",saved.calendar_event_id).eq("user_id",userData.user.id).eq("source","Life Health");if(deleted.error){setMessage(`Health saved, but calendar sync failed: ${deleted.error.message}`);return saved}const cleared=await supabase.from("gbgs_life_daily_health").update({calendar_event_id:null,updated_at:now}).eq("id",saved.id).eq("user_id",userData.user.id).select("*").single();if(cleared.data)saved=cleared.data as DailyHealthRecord}
+    if(shouldSync){const calendarPayload={title:`Workout: ${saved.workout_name}`,event_date:selectedDate,start_time:saved.workout_time,end_time:null,category:"Health",notes:packLifeNotes(saved.workout_notes,"Fitness"),completed:saved.workout_status==="Completed",source:"Life Health",source_id:saved.id,updated_at:now};let calendarId=saved.calendar_event_id;if(!calendarId){const existing=await supabase.from("gbgs_calendar_events").select("id").eq("user_id",userData.user.id).eq("source","Life Health").eq("source_id",saved.id).maybeSingle();calendarId=existing.data?.id??null}const result=calendarId?await supabase.from("gbgs_calendar_events").update(calendarPayload).eq("id",calendarId).eq("user_id",userData.user.id).select("id").single():await supabase.from("gbgs_calendar_events").insert({...calendarPayload,user_id:userData.user.id}).select("id").single();if(result.error||!result.data){setMessage(`Health saved, but calendar sync failed: ${result.error?.message??"Unknown error"}`);return saved}if(saved.calendar_event_id!==result.data.id){const linked=await supabase.from("gbgs_life_daily_health").update({calendar_event_id:result.data.id,updated_at:now}).eq("id",saved.id).eq("user_id",userData.user.id).select("*").single();if(linked.data)saved=linked.data as DailyHealthRecord}}
+    setRecord(saved);return saved
+  }
+  async function ensureDaily(){return record??await persistDaily()}
+  async function finish(text:string){await load();setMessage(text);setSaving(false);return true}
+  async function saveDaily(){setSaving(true);const saved=await persistDaily();if(!saved){setSaving(false);return false}return finish("Daily plan and targets saved.")}
+
+  async function saveExercise(input:ExerciseForm,id?:string){const reps=input.reps.split(",").map(value=>Number(value.trim())).filter(value=>Number.isFinite(value));if(!input.name.trim()||!reps.length||reps.some(value=>!Number.isInteger(value)||value<0)){setMessage("Add an exercise name and comma-separated whole-number reps for every set.");return false}if(input.weight&&Number(input.weight)<0){setMessage("Exercise weight cannot be negative.");return false}setSaving(true);const daily=await ensureDaily();const {data:userData}=await supabase.auth.getUser();if(!daily||!userData.user){setSaving(false);return false}const payload={user_id:userData.user.id,daily_health_id:daily.id,exercise_name:input.name.trim(),weight_used:num(input.weight),weight_unit:input.unit.trim()||"lbs",notes:input.notes.trim(),updated_at:new Date().toISOString()};const result=id?await supabase.from("gbgs_life_health_exercises").update(payload).eq("id",id).eq("user_id",userData.user.id).select("id").single():await supabase.from("gbgs_life_health_exercises").insert({...payload,sort_order:exercises.length}).select("id").single();if(result.error||!result.data){setMessage(result.error?.message??"Unable to save exercise.");setSaving(false);return false}await supabase.from("gbgs_life_health_exercise_sets").delete().eq("exercise_id",result.data.id).eq("user_id",userData.user.id);const inserted=await supabase.from("gbgs_life_health_exercise_sets").insert(reps.map((rep,index)=>({user_id:userData.user!.id,exercise_id:result.data.id,set_number:index+1,reps:rep})));if(inserted.error){setMessage(inserted.error.message);setSaving(false);return false}return finish(id?"Exercise updated.":"Exercise added.")}
+  async function removeExercise(id:string){setSaving(true);const {data:userData}=await supabase.auth.getUser();const result=await supabase.from("gbgs_life_health_exercises").delete().eq("id",id).eq("user_id",userData.user?.id??"");if(result.error){setMessage(result.error.message);setSaving(false);return false}return finish("Exercise removed.")}
+  async function saveMeal(input:MealForm,id?:string){if(!input.label.trim()||!input.name.trim()){setMessage("Add both a meal type/number and meal name.");return false}setSaving(true);const daily=await ensureDaily();const {data:userData}=await supabase.auth.getUser();if(!daily||!userData.user){setSaving(false);return false}const payload={user_id:userData.user.id,daily_health_id:daily.id,meal_label:input.label.trim(),meal_name:input.name.trim(),meal_time:input.time||null,updated_at:new Date().toISOString()};const result=id?await supabase.from("gbgs_life_health_meals").update(payload).eq("id",id).eq("user_id",userData.user.id):await supabase.from("gbgs_life_health_meals").insert({...payload,sort_order:meals.length});if(result.error){setMessage(result.error.message);setSaving(false);return false}return finish(id?"Meal updated.":"Meal added.")}
+  async function removeMeal(id:string){setSaving(true);const {data:userData}=await supabase.auth.getUser();const result=await supabase.from("gbgs_life_health_meals").delete().eq("id",id).eq("user_id",userData.user?.id??"");if(result.error){setMessage(result.error.message);setSaving(false);return false}return finish("Meal and its foods removed.")}
+  async function saveFood(mealId:string,input:FoodForm,id?:string){const numeric=[input.servingAmount,input.grams,input.protein,input.carbs,input.fat,input.calories,input.proteinPer100g,input.carbsPer100g,input.fatPer100g,input.caloriesPer100g];if(!input.name.trim()||numeric.some(value=>value&&(!Number.isFinite(Number(value))||Number(value)<0))){setMessage("Add a food name and valid nonnegative nutrition values.");return false}setSaving(true);const {data:userData}=await supabase.auth.getUser();if(!userData.user){setSaving(false);return false}const payload={user_id:userData.user.id,meal_id:mealId,food_name:input.name.trim(),serving_amount:num(input.servingAmount),serving_unit:input.servingUnit.trim(),grams_consumed:num(input.grams),protein_g:num(input.protein)??0,carbohydrates_g:num(input.carbs)??0,fat_g:num(input.fat)??0,calories:num(input.calories)??0,nutrition_source:input.nutritionSource||"Manual",external_food_id:input.externalFoodId||null,source_food_name:input.sourceFoodName||null,protein_per_100g:num(input.proteinPer100g),carbohydrates_per_100g:num(input.carbsPer100g),fat_per_100g:num(input.fatPer100g),calories_per_100g:num(input.caloriesPer100g),manually_overridden:input.manuallyOverridden,updated_at:new Date().toISOString()};const result=id?await supabase.from("gbgs_life_health_food_items").update(payload).eq("id",id).eq("user_id",userData.user.id):await supabase.from("gbgs_life_health_food_items").insert(payload);if(result.error){setMessage(result.error.message);setSaving(false);return false}return finish(id?"Food updated.":"Food added.")}
+  async function removeFood(id:string){setSaving(true);const {data:userData}=await supabase.auth.getUser();const result=await supabase.from("gbgs_life_health_food_items").delete().eq("id",id).eq("user_id",userData.user?.id??"");if(result.error){setMessage(result.error.message);setSaving(false);return false}return finish("Food removed.")}
+  async function saveWater(input:WaterForm,id?:string){if(!Number.isFinite(Number(input.amount))||Number(input.amount)<=0){setMessage("Enter a water amount greater than zero.");return false}setSaving(true);const daily=await ensureDaily();const {data:userData}=await supabase.auth.getUser();if(!daily||!userData.user){setSaving(false);return false}const payload={user_id:userData.user.id,daily_health_id:daily.id,amount_oz:Number(input.amount),consumed_at:input.time||timeNow(),updated_at:new Date().toISOString()};const result=id?await supabase.from("gbgs_life_health_water_entries").update(payload).eq("id",id).eq("user_id",userData.user.id):await supabase.from("gbgs_life_health_water_entries").insert(payload);if(result.error){setMessage(result.error.message);setSaving(false);return false}return finish(id?"Water entry updated.":"Water added.")}
+  async function removeWater(id:string){setSaving(true);const {data:userData}=await supabase.auth.getUser();const result=await supabase.from("gbgs_life_health_water_entries").delete().eq("id",id).eq("user_id",userData.user?.id??"");if(result.error){setMessage(result.error.message);setSaving(false);return false}return finish("Water entry removed.")}
+  async function saveSupplement(input:SupplementForm,id?:string){if(!input.name.trim()||(input.amount&&Number(input.amount)<0)){setMessage("Add a supplement name and valid amount.");return false}setSaving(true);const daily=await ensureDaily();const {data:userData}=await supabase.auth.getUser();if(!daily||!userData.user){setSaving(false);return false}const payload={user_id:userData.user.id,daily_health_id:daily.id,supplement_name:input.name.trim(),amount:num(input.amount),unit:input.unit.trim(),taken:input.taken,taken_at:input.time||null,updated_at:new Date().toISOString()};const result=id?await supabase.from("gbgs_life_health_supplements").update(payload).eq("id",id).eq("user_id",userData.user.id):await supabase.from("gbgs_life_health_supplements").insert({...payload,sort_order:supplements.length});if(result.error){setMessage(result.error.message);setSaving(false);return false}return finish(id?"Supplement updated.":"Supplement added.")}
+  async function toggleSupplement(item:Supplement){return saveSupplement({name:item.supplement_name,amount:textNum(item.amount),unit:item.unit,taken:!item.taken,time:!item.taken?(item.taken_at?.slice(0,5)??timeNow()):""},item.id)}
+  async function removeSupplement(id:string){setSaving(true);const {data:userData}=await supabase.auth.getUser();const result=await supabase.from("gbgs_life_health_supplements").delete().eq("id",id).eq("user_id",userData.user?.id??"");if(result.error){setMessage(result.error.message);setSaving(false);return false}return finish("Supplement removed.")}
+  const nutrition=totalsFor(meals.flatMap(item=>item.foods)),waterTotal=waterEntries.reduce((sum,item)=>sum+Number(item.amount_oz),0)
+  return{todayKey,selectedDate,setSelectedDate,record,form,setForm,exercises,meals,waterEntries,supplements,recentFoods,week,nutrition,waterTotal,loading,saving,message,saveDaily,saveExercise,removeExercise,saveMeal,removeMeal,saveFood,removeFood,saveWater,removeWater,saveSupplement,toggleSupplement,removeSupplement,dateShift}
+}

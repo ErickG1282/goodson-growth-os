@@ -20,6 +20,7 @@ const routes: Record<string, string> = {
   "Miz Rita HQ": "/dashboard/miz-rita",
   Kitchen: "/dashboard/kitchen",
   "Life HQ": "/dashboard/life",
+  "Financial HQ": "/dashboard/life/financial",
   "CEO Review": "/dashboard/ceo-review",
   Calendar: "/dashboard/calendar",
   Reports: "/dashboard/reports",
@@ -63,7 +64,12 @@ export function SidebarContent({ onNavigate }: SidebarProps) {
           {navItems.map((item) => {
             const Icon = item.icon
             const href = routes[item.label] || "#"
-            const active = pathname === href
+            const financialActive = pathname === "/dashboard/life/financial" || pathname.startsWith("/dashboard/life/financial/")
+            const active = item.label === "Life HQ"
+              ? pathname.startsWith("/dashboard/life") && !financialActive
+              : item.label === "Financial HQ"
+                ? financialActive
+                : pathname === href
 
             return (
               <li key={item.label}>

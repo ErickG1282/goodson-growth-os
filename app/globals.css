@@ -187,3 +187,51 @@
     cursor: not-allowed;
   }
 }
+
+@layer components {
+  .navy-button, .gold-button, .quick-button, .cancel-button, .date-button, .icon-button {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl font-bold transition-colors disabled:opacity-50;
+  }
+  .navy-button { @apply bg-[#081C35] px-3 py-2 text-xs text-white hover:bg-[#102d52]; }
+  .gold-button { @apply bg-[#C9A227] px-4 py-2.5 text-sm text-[#081C35] hover:bg-[#d8b432]; }
+  .quick-button { @apply border border-slate-200 bg-white px-3 py-2 text-xs text-[#081C35] hover:border-[#C9A227]; }
+  .cancel-button { @apply border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600; }
+  .life-form-save {
+    background-color: #fff !important;
+    color: #071f3d !important;
+    border-color: #ffbf00 !important;
+    cursor: pointer;
+    transition: all 180ms ease;
+  }
+  .life-form-save:hover {
+    background-color: #ffbf00 !important;
+    color: #071f3d !important;
+    border-color: #ffbf00 !important;
+    box-shadow: 0 6px 14px rgb(7 31 61 / 18%);
+  }
+  .life-form-save:focus { outline: none; }
+  .life-form-save:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgb(255 191 0 / 38%);
+  }
+  .life-form-cancel {
+    background-color: #fff !important;
+    color: #071f3d !important;
+    border-color: #cbd5e1 !important;
+    cursor: pointer;
+    transition: all 180ms ease;
+  }
+  .life-form-cancel:hover {
+    background-color: #071f3d !important;
+    color: #fff !important;
+    border-color: #071f3d !important;
+    box-shadow: 0 6px 14px rgb(7 31 61 / 22%);
+  }
+  .life-form-cancel:focus { outline: none; }
+  .life-form-cancel:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgb(7 31 61 / 28%);
+  }
+  .date-button { @apply h-11 w-11 bg-slate-100 text-[#081C35] hover:bg-slate-200; }
+  .icon-button { @apply h-8 w-8 text-slate-500 hover:bg-slate-100; }
+}
