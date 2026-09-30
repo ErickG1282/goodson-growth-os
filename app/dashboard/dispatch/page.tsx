@@ -19,7 +19,6 @@ import {
   Truck,
   X,
 } from "lucide-react"
-import { SidebarContent } from "@/components/dashboard/sidebar"
 import { supabase } from "@/lib/supabase"
 
 type ProspectStatus = "New" | "Contacted" | "Follow-up" | "Proposal Sent" | "Won" | "Lost"
@@ -610,11 +609,7 @@ export default function DispatchHQPage() {
 
   return (
     <div className="min-h-screen bg-[#F1F4F8]">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 lg:block">
-        <SidebarContent />
-      </aside>
-
-      <main className="min-h-screen p-4 sm:p-6 lg:pl-[17.5rem]">
+      <main className="min-h-screen p-4 sm:p-6">
         <div className="flex max-w-7xl flex-col gap-6">
           <div className="flex flex-col justify-between gap-4 rounded-2xl bg-[#081C35] p-6 text-white shadow-[0_20px_60px_-30px_rgba(8,28,53,0.45)] sm:flex-row sm:items-center">
             <div>

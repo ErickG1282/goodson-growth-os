@@ -5,6 +5,10 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "test:pricing": "tsx --test tests/freight-pricing.test.ts tests/lane-classifier.test.ts tests/email-intake-pricing.test.ts",
+    "test:broker-replies": "tsx --test tests/broker-reply.test.ts",
+    "test:quotes": "tsx --test tests/quote-request.test.ts",
+    "test:email": "tsx --test tests/freight-email-parser.test.ts tests/mileage-service.test.ts",
     "start": "next start",
     "lint": "eslint ."
   },
@@ -29,6 +33,7 @@
     "@types/react-dom": "^19",
     "postcss": "^8.5",
     "tailwindcss": "^4.2.0",
+    "tsx": "^4.23.12",
     "typescript": "5.7.3"
   },
   "pnpm": {

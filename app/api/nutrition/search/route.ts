@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
+import { nutritionPer100g, type FdcNutrient } from "@/lib/fdc-nutrients"
 
-type FdcNutrient = { nutrientId?: number; nutrientNumber?: string; nutrientName?: string; unitName?: string; value?: number }
 type FdcFood = { fdcId: number; description: string; dataType?: string; brandOwner?: string; brandName?: string; foodCategory?: string | { description?: string }; foodNutrients?: FdcNutrient[] }
 
 function words(value: string) {
@@ -27,12 +27,6 @@ function rankFood(query: string, food: FdcFood) {
   const startsWithQuery = description.startsWith(query.toLowerCase()) ? 20 : 0
   const brandedPenalty = food.brandOwner || food.brandName || food.dataType?.toLowerCase().includes("branded") ? 10 : 0
   return coverage * 100 + exactPhrase + startsWithQuery + typeWeight(food.dataType ?? "") - brandedPenalty
-}
-
-function nutrientValue(nutrients: FdcNutrient[] | undefined, ids: number[], name: RegExp) {
-  const nutrient = nutrients?.find((item) => ids.includes(Number(item.nutrientId)) || name.test(item.nutrientName ?? ""))
-  const value = Number(nutrient?.value)
-  return Number.isFinite(value) ? value : 0
 }
 
 export async function GET(request: NextRequest) {
@@ -70,10 +64,7 @@ export async function GET(request: NextRequest) {
         brandOwner: food.brandOwner ?? "",
         brandName: food.brandName ?? "",
         foodCategory,
-        proteinPer100g: nutrientValue(nutrients, [1003], /^Protein$/i),
-        carbsPer100g: nutrientValue(nutrients, [1005], /Carbohydrate, by difference/i),
-        fatPer100g: nutrientValue(nutrients, [1004], /^Total lipid \(fat\)$/i),
-        caloriesPer100g: nutrientValue(nutrients, [1008, 2047, 2048], /^Energy$/i),
+        ...nutritionPer100g(nutrients),
       }
     })
     return NextResponse.json({ source: "USDA FoodData Central", foods })
