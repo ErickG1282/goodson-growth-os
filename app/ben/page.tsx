@@ -2,8 +2,8 @@ import type { Metadata } from "next"
 import { BenDashboard } from "./dashboard"
 
 export const metadata: Metadata = {
-  title: "BEN OS | Berhane Abraha",
-  description: "Your business command center — frontend preview with sample data.",
+  title: "BEN OS | Business Command Center",
+  description: "Your authenticated organization business command center.",
 }
 
 export default function BenPage() {
